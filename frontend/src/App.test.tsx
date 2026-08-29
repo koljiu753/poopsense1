@@ -527,6 +527,19 @@ describe("PoopSense core UI", () => {
     expect(await screen.findByText("今天记得喝水")).toBeInTheDocument();
   });
 
+  it("lets the user explore Poop Island and greet a visible Agent", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("button", { name: /进入 Agent 医生/ });
+    await user.click(screen.getAllByRole("button", { name: /广场/ })[0]);
+    expect(await screen.findByRole("main", { name: "便便岛互动地图" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /小林的 Agent.*岛上可见/ }));
+    await user.click(screen.getByRole("button", { name: "去打招呼" }));
+    expect(await screen.findByText(/向小林的 Agent挥手打招呼/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "咖啡小屋" }));
+    expect(screen.getByLabelText("社区主题")).toHaveValue("diet");
+  });
+
   it("requires separate explicit consent before enabling raw data uploads", async () => {
     const user = userEvent.setup();
     render(<App />);

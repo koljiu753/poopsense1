@@ -63,7 +63,7 @@
   background: #fffaf0;
   box-shadow: 8px 8px 0 var(--ink);
 }
-.island-map-shell { overflow: hidden; }
+.island-map-shell { position: relative; overflow: hidden; }
 .island-map-toolbar {
   display: flex;
   align-items: center;
@@ -149,7 +149,7 @@
   z-index: 3;
   display: grid;
   place-items: center;
-  width: clamp(60px, 8vw, 105px);
+  width: clamp(50px, 5.4vw, 78px);
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -173,7 +173,7 @@
 .island-agent img {
   width: 100%;
   height: auto;
-  max-height: 112px;
+  max-height: 84px;
   object-fit: contain;
   filter: drop-shadow(3px 5px 0 rgba(0, 0, 0, .3));
 }

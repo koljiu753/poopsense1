@@ -1493,7 +1493,11 @@ function Social({ config, memberId }: { config: AppConfig; memberId: string }) {
           <header><h2>岛上关系</h2><span>{connections.filter((item) => item.status === "connected").length} 个已连接</span></header>
           <section>
             <h3>我的 Agent</h3>
-            <button className="relation-agent is-owner" onClick={() => setSelectedAgentId("mine")}>
+            <button
+              className="relation-agent is-owner"
+              aria-label={`${islandAgents[0].alias} · 代表当前成员 · 已授权`}
+              onClick={() => setSelectedAgentId("mine")}
+            >
               <img src="/poop-island-agent-v1.png" alt="" />
               <span><b>{islandAgents[0].alias}</b><small><i /> 代表当前成员 · 已授权</small></span>
             </button>
@@ -1501,7 +1505,12 @@ function Social({ config, memberId }: { config: AppConfig; memberId: string }) {
           <section>
             <h3>好友 {friendAliases.length}</h3>
             {islandAgents.filter((agent) => !agent.mine).map((agent) => (
-              <button key={agent.id} className="relation-agent" onClick={() => setSelectedAgentId(agent.id)}>
+              <button
+                key={agent.id}
+                className="relation-agent"
+                aria-label={`${agent.alias} · ${connectedAliases.includes(agent.alias) ? "已连接" : "岛上可见"}`}
+                onClick={() => setSelectedAgentId(agent.id)}
+              >
                 <img src="/poop-island-agent-v1.png" alt="" />
                 <span><b>{agent.alias}</b><small><i /> {connectedAliases.includes(agent.alias) ? "已连接" : "岛上可见"}</small></span>
               </button>
