@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "poopsense-backend"
 version = "0.1.0"
@@ -22,3 +26,7 @@ postgres = ["psycopg[binary]>=3.2,<4"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["migrations*", "robot_trajectories*", "scripts*", "tests*"]
