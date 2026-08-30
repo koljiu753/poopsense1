@@ -3,6 +3,8 @@
 ## 演示前准备
 
 - 固定 PoopSense 感知器、VBot、机械臂和水杯位置。
+- 检查 BME688、APDS9960、MLX90640、AS7341 与 ESP32 的供电和连接。
+- 确认 ESP32 USB Serial 已被 Python Adapter 识别，能够生成 Session JSON。
 - 清空机械臂和 VBot 周围安全区域。
 - 检查机械臂控制箱、电源、USB/CAN 和夹爪连接。
 - 确认 VBot 已加载现场使用的命名路线。
@@ -34,8 +36,8 @@ cd ..
 
 ## 推荐演示顺序
 
-1. 展示 PoopSense 感知器和家庭使用场景。
-2. 上报一条演示传感记录。
+1. 展示 PoopSense 感知器中的四类传感器、ESP32 和家庭使用场景。
+2. 展示接近触发、串口数据和 Python Adapter 生成的 Session JSON。
 3. 在待认领箱选择家庭成员。
 4. 展示动画反馈、个人趋势和 Agent 分析。
 5. 展示补水建议、安全检查和用户确认。

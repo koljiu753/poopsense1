@@ -4,7 +4,7 @@
 
 ![PoopSense 项目封面](docs/assets/poopsense-project-cover.png)
 
-PoopSense 是一套面向家庭健康照护场景的隐私优先型智能硬件系统。便便感知器采集排便相关的结构化特征，软件端由主 Agent 联合健康医生、生活教练、家庭管家、安全仲裁、主动关怀和社交社区 Agent，结合长期记忆与个人趋势生成易理解、可执行的建议；经过用户确认和安全检查后，系统通过 Tooling 调用机械臂、VBot 和提醒机器人，将健康建议转化为现实行动。
+PoopSense 是一套面向家庭健康照护场景的隐私优先型智能硬件系统。BME688、APDS9960、MLX90640 和 AS7341 分别采集气体响应、接近状态、热成像形状特征与颜色信息；ESP32 统一读取后，经 USB Serial 交给电脑端 Python Adapter 完成特征处理、分类和 Session JSON 封装。软件端由主 Agent 联合健康医生、生活教练、家庭管家、安全仲裁、主动关怀和社交社区 Agent，结合长期记忆与个人趋势生成易理解、可执行的建议；经过用户确认和安全检查后，系统通过 Tooling 调用机械臂、VBot 和提醒机器人，将健康建议转化为现实行动。
 
 PoopSense 不替代医疗诊断。系统将传感事实、规则判断、模型解释和现实设备动作分层处理，让模型负责解释与编排，确定性代码负责风险边界、权限和动作安全。
 
@@ -18,16 +18,29 @@ PoopSense 不替代医疗诊断。系统将传感事实、规则判断、模型�
 ## 从感知到行动
 
 ```text
-便便感知器 → 数据接入 → 成员认领 → 个人趋势
-                              ↓
-                    主 Agent 与专业 Agent
-                              ↓
-                  安全仲裁 + 用户明确确认
-                              ↓
-       机械臂取杯 → VBot 预设路线 → 机械臂递水
-                              ↓
-                       任务结果与审计
+BME688 / APDS9960 / MLX90640 / AS7341
+                    ↓
+                  ESP32
+                    ↓ USB Serial
+        Python Adapter → Session JSON
+                    ↓
+      PoopSense App → 主 Agent 与专业 Agent
+                    ↓
+          安全仲裁 + 用户明确确认
+                    ↓
+   机械臂取杯 → VBot 命名路线 → 机械臂递水
+                    ↓
+             任务结果与审计
 ```
+
+## 六层系统架构
+
+- **感知层**：BME688 气体响应，APDS9960 接近状态，MLX90640 热成像形状特征，AS7341 颜色特征。
+- **嵌入式层**：ESP32 管理传感器、采集状态和基础预处理。
+- **边缘计算层**：MacBook/边缘设备上的 Python Adapter 负责解析、特征提取、分类、融合、质量评估和 JSON 封装。
+- **应用层**：PoopSense App 展示 Session、动画反馈、个人趋势并提供用户交互。
+- **智能决策层**：主 Agent、专业 Agent、长期记忆与安全仲裁共同生成可执行任务。
+- **执行层**：提醒机器人、VBot 与 Panthera 机械臂完成提醒、移动、取杯和递水，并回传执行结果。
 
 机器人递水工作流：
 
@@ -117,6 +130,8 @@ cd ..\backend
 ## 机器人与硬件
 
 PoopSense 为团队从零设计和开发的原创项目，使用 Panthera-HT 机械臂、VBot 机器狗及相关 SDK 作为通用硬件平台。团队原创完成产品定义、数据链路、Agent 系统、长期记忆、安全仲裁、机器人 Tooling、动作轨迹标定和整体任务流程。
+
+感知器由 BME688、APDS9960、MLX90640、AS7341 与 ESP32 组成。四类传感器的数据经 USB Serial 进入 Python Adapter，并映射为后端现有的 `shape`、`color`、`odor`、`presence_state`、温湿度、置信度和模型版本字段。详细数据契约见 [硬件说明](hardware/README.md)，完整连接关系见 [系统连接图](docs/wiring-diagram.md)。
 
 - [Panthera-HT Main](https://github.com/HighTorque-Robotics/Panthera-HT_Main)
 - [Panthera-HT Host](https://github.com/HighTorque-Robotics/Panthera-HT_Host)
