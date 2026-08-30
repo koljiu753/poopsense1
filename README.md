@@ -2,7 +2,7 @@
 
 > 从一次感知，到一次真实的健康行动。
 
-![PoopSense 项目封面](docs/assets/poopsense-project-cover.png)
+![PoopSense2A 项目封面](docs/assets/poopsense2a-project-cover.png)
 
 PoopSense 是一套面向家庭健康照护场景的隐私优先型智能硬件系统。BME688、APDS9960、MLX90640 和 AS7341 分别采集气体响应、接近状态、热成像形状特征与颜色信息；ESP32 统一读取后，经 USB Serial 交给电脑端 Python Adapter 完成特征处理、分类和 Session JSON 封装。软件端由主 Agent 联合健康医生、生活教练、家庭管家、安全仲裁、主动关怀和社交社区 Agent，结合长期记忆与个人趋势生成易理解、可执行的建议；经过用户确认和安全检查后，系统通过 Tooling 调用机械臂、VBot 和提醒机器人，将健康建议转化为现实行动。
 
