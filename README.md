@@ -1,118 +1,75 @@
-# PoopSense｜便感智护
+# PoopSense｜便知
 
-> 从一次感知，到一次真实的健康行动。
+> SEE. SMELL. SENSE. 把每一次身体信号，变成看得懂、能回看的日常记录。
 
-![PoopSense2A 项目封面](docs/assets/poopsense2a-project-cover.png)
+![PoopSense 项目封面](docs/assets/poopsense2a-project-cover.png)
 
-PoopSense 是一套面向家庭健康照护场景的隐私优先型智能硬件系统。BME688、APDS9960、MLX90640 和 AS7341 分别采集气体响应、接近状态、热成像形状特征与颜色信息；ESP32 统一读取后，经 USB Serial 交给电脑端 Python Adapter 完成特征处理、分类和 Session JSON 封装。软件端由主 Agent 联合健康医生、生活教练、家庭管家、安全仲裁、主动关怀和社交社区 Agent，结合长期记忆与个人趋势生成易理解、可执行的建议；经过用户确认和安全检查后，系统通过 Tooling 调用机械臂、VBot 和提醒机器人，将健康建议转化为现实行动。
+PoopSense 是面向家庭一般成员的马桶侧传感设备与 AI 助手项目。当前软件围绕“传感记录 → 可靠卡通 → 报告与生活建议 → 用户回应 → 后续观察与趋势”展开，帮助每位成员找到自己的记录、理解这次信号，并在下次回来时接着看。
 
-PoopSense 不替代医疗诊断。系统将传感事实、规则判断、模型解释和现实设备动作分层处理，让模型负责解释与编排，确定性代码负责风险边界、权限和动作安全。
+当前处于软件演示与传感器联调阶段。报告为自动生成的健康参考，未经真人医生审核，不替代医疗诊断。机械臂、VBot 和取水/递水能力仅作为历史模块保留，不属于当前产品流程。
 
-## 为什么做 PoopSense
+## 在线演示
 
-- 老人和儿童很难长期、主动地记录排便及身体变化。
-- 家庭照护者通常只能依赖零散描述，难以及时了解长期趋势。
-- 传统健康产品容易堆叠指标，却没有把建议转化为真正发生的行动。
-- 用户既需要长期关怀，也需要明确的数据授权、静默时段和隐私边界。
+[打开 PoopSense 演示](https://poopsense-live-demo.vercel.app/)
 
-## 从感知到行动
+本次更新的部署与公网验收尚待完成。该站使用共用虚构演示数据和临时 SQLite，记录可能因实例切换或重启丢失；在线模拟采集入口已禁用。请使用虚构内容体验，不录入真实健康或身份信息。演示可访问不代表已完成独立登录、持久数据库或正式生产部署。
 
-```text
-BME688 / APDS9960 / MLX90640 / AS7341
-                    ↓
-                  ESP32
-                    ↓ USB Serial
-        Python Adapter → Session JSON
-                    ↓
-      PoopSense App → 主 Agent 与专业 Agent
-                    ↓
-          安全仲裁 + 用户明确确认
-                    ↓
-   机械臂取杯 → VBot 命名路线 → 机械臂递水
-                    ↓
-             任务结果与审计
-```
+## 当前体验
 
-## 六层系统架构
+1. **找到这次记录。** 首页以成员的便便日记为场景，用角色、日期和一句解释呈现最近一次记录；旧记录可逐条打开。
+2. **读懂报告。** 同一条记录的角色延续到报告页，先展示可读观察、一项优先建议和回应入口，其他建议与依据按需展开。紧急与不可靠状态保留完整说明。
+3. **留下回应。** “准备试试”等选择只在服务端确认后标记已保存。返回首页或重新读取时可找回该成员、该记录的回应；采用意向不代表已经执行。
+4. **回来看看。** 健康页分为记录、行动、趋势。行动回看连接原记录、已保存选择、后续可靠观察及主观感受；30/90 天趋势展示类别与个人基线，样本不足时明确说明。前后变化不表示建议带来了因果效果。
 
-- **感知层**：BME688 气体响应，APDS9960 接近状态，MLX90640 热成像形状特征，AS7341 颜色特征。
-- **嵌入式层**：ESP32 管理传感器、采集状态和基础预处理。
-- **边缘计算层**：MacBook/边缘设备上的 Python Adapter 负责解析、特征提取、分类、融合、质量评估和 JSON 封装。
-- **应用层**：PoopSense App 展示 Session、动画反馈、个人趋势并提供用户交互。
-- **智能决策层**：主 Agent、专业 Agent、长期记忆与安全仲裁共同生成可执行任务。
-- **执行层**：提醒机器人、VBot 与 Panthera 机械臂完成提醒、移动、取杯和递水，并回传执行结果。
+首页、报告、健康、广场和“我的”沿用亮粉、明黄、蓝、奶油白与黑色品牌，使用角色场景、气泡和网点建立连续体验。
 
-机器人递水工作流：
+### 导航与输入
+
+- 浏览器返回、前进及刷新可恢复成员、页面、健康分区、趋势范围和报告/行动来源；已检查路径支持滚动和焦点恢复。无法查看的记录给出明确返回入口，不改为分析另一条记录。
+- 健康、广场和“我的”收到新记录时先显示提醒，由用户选择查看；待看队列优先显示安全提醒，普通记录不会覆盖未看的安全项。
+- 同一成员在导航切换期间保留广场草稿和“我的”未提交编辑；切换成员或家庭连接范围时隔离状态。未提交草稿不承诺刷新后保留。
+- 发布面板支持自动聚焦、键盘操作、关闭后恢复位置和草稿，并按浏览器可见区域调整。每条发布仍需明确确认。
+
+## 数据与 Agent 的分工
 
 ```text
-补水建议 → 用户确认 → 待机位 → 取水预备位 → 取水位
-→ 夹紧 → 提起/安全运输位 → VBot 命名路线 → 递水预备位
-→ 递水位 → 用户接杯确认 → 松爪 → 返回待机位 → 结果反馈
+设备上传 / 本地虚构模拟
+          ↓
+版本与质量校验 → 成员认领 → 可靠事实与风险规则
+          ↓
+卡通形态 + 自动报告 + 受约束的生活建议
+          ↓
+用户回应 → 后续可靠观察 → 个人趋势与回看
 ```
 
-## Agent 架构
+- 确定性代码负责身份与授权检查、数据质量、风险边界、允许动作和审计；用户修改不会覆盖原始传感事实。
+- 卡通读取后端的 `visual_profile`，不从模型语气猜测形态；不可靠数据使用不确定形象。
+- Agent 解释经过校验的最小上下文。模型不可用时，会话报告可返回规则允许的基础报告；真实对话仍需配置模型，不能以假回复代替。
+- 未认领记录不进入个人趋势；家庭查看权、编辑权与原始数据专项授权分别处理。社区不会自动把健康记录写入公开正文。
 
-- **主 Agent**：理解用户请求、组织最小授权上下文并进行任务编排。
-- **健康医生 Agent**：解释结构化结果、历史趋势和需要关注的变化。
-- **生活教练 Agent**：把结果转化为饮水、饮食、运动与生活建议。
-- **安全仲裁 Agent**：以确定性规则检查风险、权限和机器人动作条件。
-- **家庭管家 Agent**：管理成员、数据认领、查看授权和家庭协作。
-- **主动关怀 Agent**：遵守静默时段和频率限制，发起适度的主动提醒。
-- **社交/社区 Agent**：在用户明确授权下以 Agent 化名交流和建立连接。
-- **记忆与 Soul**：保存自报信息、传感事实、反馈偏好、语气和关系目标。
-- **Tooling**：封装趋势查询、家庭授权、机械臂、VBot 和提醒机器人能力。
+## 本地启动
 
-详见 [Agent 系统说明](docs/agent-system.md) 与 [系统架构](docs/architecture.md)。
+需要 Python 3.11+、Node.js 24 和 npm。仓库 CI 配置使用 Python 3.12 / Node.js 24。
 
-## 已实现能力
-
-- 设备会话接入、版本校验、幂等处理和成员认领。
-- 个人类别基线、趋势、连续变化和可靠样本覆盖率。
-- 主 Agent 委派、专业 Agent Skill、运行步骤、handoff 和审计记录。
-- 长期记忆、Soul 版本、反馈偏好和结构化健康自报。
-- 家庭查看授权、撤回、原始数据专项授权与删除状态管理。
-- 主动关怀、站内通知、周报、便便宠物和社区/Agent 连接。
-- Panthera 固定关节点位取杯、提起、递水轨迹与停止控制。
-- VBot 命名路线接口、到站检查、用户接杯确认和递水任务状态机。
-- React/PWA 用户界面、动画反馈、趋势、家庭、社区及 Agent 页面。
-
-## 仓库结构
-
-```text
-frontend/                  React + TypeScript + Vite 前端
-backend/app/               FastAPI、Agent、记忆、授权与机器人 Tooling
-backend/tests/             后端测试
-backend/migrations/        Alembic 数据库迁移
-backend/robot_trajectories/机械臂成功轨迹与演示配置
-backend/VBOT_BRIDGE.md      VBot HTTP/ROS 2 桥接契约
-hardware/                  传感数据协议与示例数据
-docs/                      架构、BOM、安全和演示说明
-```
-
-## 快速启动（Windows）
-
-环境要求：Python 3.11+、Node.js 20.19+。
+Windows PowerShell 首次安装：
 
 ```powershell
 git clone https://github.com/koljiu753/poopsense1.git
 cd poopsense1
-
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-Copy-Item .env.local.example .env.local
-
-cd ..\frontend
+python -m venv backend/.venv
+backend/.venv/Scripts/python.exe -m pip install -e "./backend[dev]"
+Copy-Item backend/.env.local.example backend/.env.local
+cd frontend
 npm ci
-
 cd ..
-.\start_demo.ps1
+./start_demo.ps1 -LocalOnly
 ```
 
-浏览器打开 `http://127.0.0.1:5173/`。后端 OpenAPI 文档位于 `http://127.0.0.1:8000/docs`。
+打开 `http://127.0.0.1:5173/`；API 文档位于 `http://127.0.0.1:8000/docs`。前端通过同源代理连接本机后端。已有 `.env.local` 时保留自己的配置，不重复覆盖。
 
-模型密钥只写入本地 `backend/.env.local` 或系统环境变量。演示身份凭证只用于本机开发环境，生产部署必须关闭 Demo bootstrap 并接入正式登录。
+也可分别启动：在 `backend/` 的已安装虚拟环境中运行 `python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`，另一个终端在 `frontend/` 运行 `npm run dev`。
+
+本地首页的“体验一次传感器检测”使用虚构预设，经过接收、归属与分析链路；仅在允许的演示环境开放，不代表真实硬件采集。模型参数按 [后端说明](backend/README.md) 配置，密钥只放在本地忽略文件或服务端环境变量中。
 
 ## 测试
 
@@ -120,44 +77,44 @@ cd ..
 cd frontend
 npm test
 npm run build
-
-cd ..\backend
-.\.venv\Scripts\python.exe -m pytest
+cd ../backend
+./.venv/Scripts/python.exe -m pytest
 ```
 
-当前版本包含前端组件/交互测试和后端 Agent、授权、隐私、趋势及机器人递水测试；GitHub Actions 会在每次提交时自动执行测试与构建。
+2026-09-10 22:42:48（北京时间）开始的本地前端回归为 **75/75 通过**，TypeScript/Vite 构建通过。后端本轮回归：**103/103 通过（2026-09-10 22:49:21开始，未调用真实模型或硬件）**。
 
-## 机器人与硬件
+本地浏览器已检查历史导航、成员与记录定位、滚动/焦点恢复和窄屏布局。发布面板完成 320/390 宽、420/300 可见高度的四组模拟检查，属于浏览器可见区域模拟，尚非手机真机软键盘验收。仓库配置了 GitHub Actions 测试与构建，具体提交的 CI 结果以该次运行记录为准。
 
-PoopSense 为团队从零设计和开发的原创项目，使用 Panthera-HT 机械臂、VBot 机器狗及相关 SDK 作为通用硬件平台。团队原创完成产品定义、数据链路、Agent 系统、长期记忆、安全仲裁、机器人 Tooling、动作轨迹标定和整体任务流程。
+## 目录与文档
 
-感知器由 BME688、APDS9960、MLX90640、AS7341 与 ESP32 组成。四类传感器的数据经 USB Serial 进入 Python Adapter，并映射为后端现有的 `shape`、`color`、`odor`、`presence_state`、温湿度、置信度和模型版本字段。详细数据契约见 [硬件说明](hardware/README.md)，完整连接关系见 [系统连接图](docs/wiring-diagram.md)。
+```text
+frontend/                   React + TypeScript + Vite 界面与交互测试
+backend/app/                FastAPI、记录、Agent、授权与审计
+backend/tests/              后端测试
+backend/migrations/         Alembic 数据库迁移
+hardware/                   传感数据契约、样例与历史接入资料
+docs/assets/                项目封面等公开素材
+docs/                       架构、安全与历史比赛资料
+backend/robot_trajectories/  历史机械臂轨迹，不属当前产品流程
+```
 
-- [Panthera-HT Main](https://github.com/HighTorque-Robotics/Panthera-HT_Main)
-- [Panthera-HT Host](https://github.com/HighTorque-Robotics/Panthera-HT_Host)
-- [Panthera-HT SDK](https://github.com/HighTorque-Robotics/Panthera-HT_SDK)
+- 当前运行与接口：[后端 README](backend/README.md)、[前端 README](frontend/README.md)。
+- 传感契约与组件来源：[硬件说明](hardware/README.md)、[第三方组件说明](THIRD_PARTY_NOTICES.md)。
+- 历史设计资料：[系统架构](docs/architecture.md)、[Agent 系统](docs/agent-system.md)、[隐私与安全设计](docs/privacy-and-safety.md)。其中机器人执行、比赛演示及部分旧界面描述只反映当时设计，当前范围以本 README 为准。
+- [机器人工作流](docs/robot-workflow.md)、[VBot 桥接](backend/VBOT_BRIDGE.md)、[旧演示指南](docs/demo-guide.md)仅供查阅历史模块。默认 `POOPSENSE_LEGACY_ROBOT_ENABLED=false`，当前演示不要求连接这些设备。
 
-详见 [第三方组件说明](THIRD_PARTY_NOTICES.md)、[硬件说明](hardware/README.md) 和 [BOM](docs/bom.csv)。
+## 当前限制
 
-## 隐私与安全
-
-- 未认领记录不会自动进入个人趋势。
-- 查看授权、编辑权限和原始数据授权相互独立。
-- Soul 与模型解释不能覆盖传感事实和确定性风险规则。
-- 机器人动作需要明确确认，并支持超时、停止、到位检查和任务审计。
-- 社区分享需要显式同意，只使用用户输入的公开内容。
-- 仓库不包含真实用户数据、设备密钥或模型 API Key。
-
-详见 [隐私与安全设计](docs/privacy-and-safety.md)。
-
-## 比赛信息
-
-- 团队：**一问便知**
-- 项目：**PoopSense｜便感智护**
-- 赛道：智能硬件赛道
-- 项目类型：从 0 到 1 创新项目
-- GitHub Topic：`shenicest-fission`
+- 真实数据内测仍需独立用户身份、持久数据库和可靠的后台任务部署；现有演示凭证不能当作正式登录。
+- 本轮验证以本地模拟数据和规则报告为主，不构成真实传感器全流程、临床有效性、量产或长期生产可用性验证。
+- 长期使用价值、真实慢网、手机真机输入和实际用户任务完成率仍需继续验证。
 
 ## License
 
-团队原创代码以 [MIT License](LICENSE) 发布。第三方硬件、SDK、模型和素材分别遵循其原始许可证与使用条款。
+原创代码以 [MIT License](LICENSE) 发布。第三方硬件、SDK、模型和素材分别遵循其原始许可证与使用条款。
+
+## 部署结构
+
+根目录 `vercel.json` 保留前后端 Services 一体部署。`frontend/vercel.json` 也支持单独发布新版界面，通过同域重写沿用现有公网演示后端；它不会连接本地电脑。两种配置都属于演示用途，不等于持久化生产环境。
+
+正常 Git checkout 已包含品牌图片。仅源码上传时，构建前会从既有公开提交下载缺失图片并校验 SHA-256；资源声明位于 `frontend/scripts/public-assets.json`。

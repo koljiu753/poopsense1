@@ -3,6 +3,13 @@ import time
 
 import httpx
 import pytest
+from dataclasses import replace
+
+
+@pytest.fixture(autouse=True)
+def enable_historical_competition_module(monkeypatch):
+    from app import main
+    monkeypatch.setattr(main, "settings", replace(main.settings, legacy_robot_enabled=True))
 
 from app.robot import (
     POSE_ORDER, RobotTaskError, RobotTaskService, UnavailableVBotNavigator,
@@ -66,7 +73,7 @@ def wait_for_status(service, expected, timeout=2.0):
     raise AssertionError(f"task did not reach {expected}: {service.runtime_status()}")
 
 
-def test_hydration_chat_offers_delivery_but_other_chat_does_not(client, monkeypatch):
+def test_hydration_chat_no_longer_offers_execution_actions(client, monkeypatch):
     import app.main as main_module
     from app.agent import chat
 
@@ -87,7 +94,7 @@ def test_hydration_chat_offers_delivery_but_other_chat_does_not(client, monkeypa
         headers=OWNER,
     )
     assert hydration.status_code == 200
-    assert "offer_water_pickup" in hydration.json()["allowed_actions"]
+    assert "offer_water_pickup" not in hydration.json()["allowed_actions"]
 
     general = client.post(
         "/api/v1/households/hh_001/agent/chat",

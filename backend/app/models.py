@@ -240,6 +240,33 @@ class AgentFeedback(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class HealthActionFollowup(Base):
+    """A user-visible bridge from one reliable recommendation to a later observation."""
+
+    __tablename__ = "health_action_followups"
+    __table_args__ = (
+        UniqueConstraint("household_id", "subject_member_id", "source_session_id",
+                         name="uq_health_action_source_session"),
+    )
+
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    household_id: Mapped[str] = mapped_column(ForeignKey("households.id"), index=True)
+    subject_member_id: Mapped[str] = mapped_column(ForeignKey("household_members.id"), index=True)
+    source_session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), index=True)
+    recommendation_categories: Mapped[list[str]] = mapped_column(JSON)
+    adoption_status: Mapped[str] = mapped_column(String(30), default="suggested", index=True)
+    perceived_outcome: Mapped[str] = mapped_column(String(30), default="pending")
+    observed_outcome: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    observed_from_session_id: Mapped[int | None] = mapped_column(ForeignKey("sessions.id"), nullable=True)
+    observed_outcome_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    updated_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AgentMemoryEntry(Base):
     __tablename__ = "agent_memory_entries"
     __table_args__ = (

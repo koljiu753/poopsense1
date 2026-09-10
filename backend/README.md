@@ -1,6 +1,28 @@
-# PoopSense Backend（第一阶段）
+# PoopSense Backend
 
-当前实现的是“可靠数据链路 → 成员认领”的可运行骨架。设备事实不会被用户纠正覆盖；成员认领以新版本追加，Outbox 与业务数据在同一数据库事务中写入。
+## 当前传感器产品范围（2026-09-07）
+
+机械臂、机器狗、取水/递水仅保留为历史比赛模块。默认 `POOPSENSE_LEGACY_ROBOT_ENABLED=false`，所有 `/api/v1/households/{household_id}/robot/*` 接口返回 404，不连接执行设备。只有显式开启历史模块才能访问旧接口；当前 Agent 策略和前端不再提供执行建议或入口，即使开启旧接口也不恢复产品入口。机器人 SDK、轨迹和历史测试保留，不属于当前产品验收。部署前不得在有运动任务运行时切换开关，应先安全停止任务。
+
+当前已实现“可靠数据链路 → 成员认领 → 会话级自动分析 → 多专家建议 → 可审计行动”的可运行闭环。设备事实不会被用户纠正覆盖；成员认领以新版本追加，Outbox 与业务数据在同一数据库事务中写入。
+
+## 传感会话自动分析
+
+### 无硬件演示入口（2026-09-07）
+
+首页展开“体验一次传感器检测”，选择偏干、成形、偏稀、采集不清楚或颜色警示预设。
+此入口当前仅本地/持久存储演示环境可用。2026-09-07 线上实测发现 Vercel 临时 SQLite 实例间不共享新记录，因此强制禁用该环境的模拟写入并显示原因；不得通过隐藏提示宣称线上完整流程已通过。
+`GET/POST /api/v1/households/hh_001/sensor-simulation` 仅在 demo/development 且开启演示设备引导时可用；只有种子演示家庭的 owner 身份可以提交。生产环境强制不可用，不接受任意观察字段，不向前端发送设备凭据。
+请求包括 UUID request_id、带时区 timestamp、scenario 和 member_id（m_001/m_002/null）。同一次失败重试保留请求内容；不同内容复用 ID 返回冲突。新请求限最近 10 分钟、演示家庭每小时最多 60 条（演示限额，不是分布式生产限流）。
+预设走原有 ingest/claim/assessment/outbox 链路，标记 synthetic_demo、sensor-simulation-v1；member_id=null 保持待认领，不进入个人趋势。模拟入口只用于共用虚构数据空间，不可与真实家庭数据混用。
+确认记录后浏览器直接进入卡通→报告；数据不可靠或需紧急关注时，不把该记录用作生活建议后的改善判断。当前公开演示仍为临时 SQLite，不承诺跨实例和重启持久化；真实用户内测前仍需要独立登录和持久数据库。
+
+- `POST /api/v1/households/{household_id}/agent/session-analysis` 以已认领会话为输入，不需要用户再编写问题。
+- 确定性规则先校验成员归属、传感置信度、红线和允许动作；数据不足时只返回“本次无法可靠判断”。
+- 可靠普通会话产生结构化报告，包含形状、颜色、气味事实以及补水、饮食、活动和继续观察建议。
+- 主 Agent 将任务交给健康医生和生活教练，最后由确定性安全仲裁复核；模型不可用时仍返回规则放行的结构化保底报告。
+- 分析以会话、评估版本和调用者生成幂等键，重试不会重复调用模型或重复生成行动。
+- 对话、模型/策略版本、授权依据、Agent 交接、报告和允许动作同步写入审计链。
 
 ## LLM 调度配置
 
@@ -59,14 +81,16 @@ worker 命令即可完成主动闭环。`agent/status` 会返回 worker 是否�
 - worker 的安全动作现在写入 `user_notifications`，支持未读、已读、已确认状态，并以 `agent_action_id` 保证一次行动只产生一条站内通知。
 - 通知列表和状态变更每次都重新检查接收人及当前授权；家庭查看授权撤回后，既有相关通知也不再对查看者可见。
 - `agent_profile_revisions` 保存 Soul 每一版完整快照和修改人。前端展示版本记录及“为什么这样回应”的配置依据；Soul 始终不能覆盖传感事实。
-- 当前演示使用可读、可确认、可审计的站内通知作为统一消息入口。
+- 当前只实现站内通知；浏览器 Push、短信和邮件仍未接入。
 
 ## 结构化自报、个人基线与反馈闭环
 
 - `GET/PUT /members/{member_id}/health-profile` 管理病史、饮食、作息、用药和目标；底层继续使用 `self_report` 版本化记忆，查看授权不等于编辑授权。
 - 趋势按类别建立个人基线。每维至少需要 3 个历史可靠样本；不足时返回 `baseline_status=insufficient`，不会伪造趋势。
+- 趋势接口同时返回 30/90 天周序列、全局基线积累进度和最近两次可靠形态变化。5 次是当前产品演示门槛，不是医学阈值；前后变化明确不解释为建议导致的因果结果。
+- `GET/PUT /members/{member_id}/action-followups` 保存“建议 → 是否采用 → 用户感受 → 下一次可靠观测”。会话报告只在可靠、非红线状态下创建行动回看；新可靠记录到达时自动补写观察结果，查看授权不自动获得编辑权。
 - `PUT /agent/messages/{message_id}/feedback` 支持有帮助/没帮助的幂等更新。反馈汇总进入下一轮 `feedback_preferences`，只允许适配表达方式，不能改变风险、权限或原始事实。
-- 本地 Demo 使用开发身份凭证；生产部署必须关闭 Demo bootstrap 并接入正式身份认证。
+- 正式登录页面仍未开发，当前继续使用开发身份凭证。
 
 ## Skill 能力包
 
@@ -90,8 +114,8 @@ Skill 不再只是字符串。`app/skills.py` 为每项能力声明版本、执�
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.\.venv-win\Scripts\python.exe -m pytest
+.\.venv-win\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
 在另一台机器首次安装时：
@@ -115,12 +139,29 @@ python -m uvicorn app.main:app --reload
 生产环境应设置：
 
 ```powershell
+$env:POOPSENSE_APP_ENV = "production"
 $env:POOPSENSE_DATABASE_URL = "postgresql+psycopg://user:password@localhost/poopsense"
 $env:POOPSENSE_BOOTSTRAP_DEMO_DEVICE = "false"
+$env:POOPSENSE_BOOTSTRAP_DEMO_DATA = "false"
 $env:POOPSENSE_AUTO_CREATE_SCHEMA = "false"
+$env:POOPSENSE_INLINE_WORKER_ENABLED = "false"
+$env:POOPSENSE_EXTERNAL_WORKER_ENABLED = "true"
 python -m pip install -e ".[postgres]"
 alembic upgrade head
+python scripts/production_preflight.py
 ```
+
+完整变量模板见 `.env.production.example`。`POOPSENSE_APP_ENV=production` 会启用启动门禁：
+SQLite、演示账号/数据、运行时自动建表、非独立 worker、缺少 worker 密钥，以及主动 Agent
+开启但缺少模型密钥时，API 会拒绝启动。`GET /ready` 同时返回环境、数据库方言、迁移策略、
+worker 策略和不含秘密的阻塞原因；`GET /health` 仅用于进程存活探针。
+
+独立常驻进程使用 `python -m app.worker --watch` 持续消费，不需要对外暴露调度接口。
+只有在平台不支持常驻进程时，才设置 `POOPSENSE_HTTP_WORKER_ENABLED=true` 和
+`POOPSENSE_WORKER_TOKEN`；外部调度器使用 `Authorization: Bearer <POOPSENSE_WORKER_TOKEN>` 调用
+`POST /api/internal/worker/run`，每次只消费配置上限内的一批 outbox，并返回队列/死信数量。
+该入口在未显式启用或未配置密钥时表现为不存在，错误凭证返回 401。正式部署仍优先运行
+`python -m app.worker` 独立常驻进程；HTTP 入口用于不支持常驻进程的平台或定时兜底。
 
 ## 已实现接口
 
@@ -135,14 +176,15 @@ alembic upgrade head
 独立 Outbox worker（生产部署或人工排障）：
 
 ```powershell
-.\.venv\Scripts\python.exe -m app.worker --limit 100
+.\.venv-win\Scripts\python.exe -m app.worker --limit 100
+.\.venv-win\Scripts\python.exe -m app.worker --watch --limit 100 --poll-seconds 1
 # 人工重放死信；沿用原事件和幂等键
-.\.venv\Scripts\python.exe -m app.worker --replay-id 123 --limit 100
+.\.venv-win\Scripts\python.exe -m app.worker --replay-id 123 --limit 100
 ```
 
 worker 使用 `pending → processing → succeeded` 状态机。失败按指数退避进入 `retry`，达到有限次数后进入 `dead_letter`；进程崩溃遗留的 `processing` 任务会在租约过期后被回收。
 
-红线通知任务在真正发送时再次读取最新授权。即使撤回与 worker 出队并发，过期授权也不能通过发送前检查。当前 `delivery: in_app` 会形成可读、可确认、可审计的站内通知。
+红线通知任务在真正发送时再次读取最新授权。即使撤回与 worker 出队并发，过期授权也不能通过发送前检查。当前 `delivery: in_app` 会形成可读、可确认的站内通知；邮件、短信和浏览器 Push 供应商尚未连接。
 
 ## 架构影响（通俗版）
 
@@ -173,12 +215,12 @@ python -m pytest
 本地模拟一次“便便一颗颗、偏干硬”的完整软件流程：先让浏览器停留在首页，再运行：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\simulate_dry_flow.py
+.\.venv-runtime\Scripts\python.exe scripts\simulate_dry_flow.py
 ```
 
 脚本只上报并认领一条模拟传感结果，不会启动真实机械臂。机械臂仍须在 Agent 页面依次点击“准备取水”和“确认开始取水”。
 
-完整移动递水链路由确定性状态机编排：
+以下完整移动递水链路保留为后续扩展，不是当前演示入口：
 
 完整递水任务使用确定性状态机执行：
 
@@ -189,7 +231,7 @@ python -m pytest
 - `POST /api/v1/households/{household_id}/robot/tasks/{task_id}/confirm-handover`：用户扶稳水杯后确认，确认前夹爪不会松开。
 - `POST /api/v1/households/{household_id}/robot/tasks/stop`：同时请求停止机械臂和 VBot。
 
-任务结果写入 `agent_actions`，可用于审计和软件端结果反馈。VBot 离线、路线失败或超时都会阻止后续递水动作。VBot HTTP/ROS 2 桥接契约和现场接入步骤见 [VBOT_BRIDGE.md](./VBOT_BRIDGE.md)。
+任务结果写入 `agent_actions`，可用于审计和软件端结果反馈。VBot 未配置、离线、路线失败或超时都会阻止后续递水动作。VBot HTTP/ROS 2 桥接契约和现场接入步骤见 [VBOT_BRIDGE.md](./VBOT_BRIDGE.md)。
 
 数据库迁移验证：
 
@@ -234,7 +276,7 @@ Agent 对话包含“综合分析 / 第二意见 / 多专家”等意图时启�
 - `GET /members/{member_id}/weekly-reports`：读取最近 12 份授权范围内的周报。
 - `POST /members/{member_id}/weekly-reports`：生成当前自然周周报；同一成员同一周幂等。
 
-周报先执行可靠性门控。覆盖不足或可靠记录少于 3 条时不形成趋势判断；可靠时可由配置的模型解释已冻结事实，模型不可用则回退确定性摘要。生成操作同步记录 Agent Action 与站内通知。数据库迁移头为 `f04a82b1d963`。
+周报先执行可靠性门控。覆盖不足或可靠记录少于 3 条时不形成趋势判断；可靠时可由配置的模型解释已冻结事实，模型不可用则回退确定性摘要。生成操作同步记录 Agent Action 与站内通知。
 
 ## 原始数据专项授权 API
 
@@ -243,4 +285,4 @@ Agent 对话包含“综合分析 / 第二意见 / 多专家”等意图时启�
 - `POST .../{id}/complete-deletion`：执行并记录云端对象删除完成。
 - `POST /api/v1/raw-data-uploads`：设备密钥保护的对象上传登记与范围复核。
 
-当前后端不接收或保存原始字节，只保存外部对象引用、类型、大小、SHA-256 和删除状态；接入真实对象存储时应由同一删除状态机驱动供应商删除。迁移头为 `a76c20d9e451`。
+当前后端不接收或保存原始字节，只保存外部对象引用、类型、大小、SHA-256 和删除状态；接入真实对象存储时应由同一删除状态机驱动供应商删除。当前迁移头为 `a713f984c2d1`。

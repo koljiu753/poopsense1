@@ -2,19 +2,24 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import secrets
 import threading
 import uuid
+import os
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict
+from typing import Literal
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
     AgentAction, AgentConversation, AgentFeedback, AgentHandoff, AgentMemoryEntry, AgentMessage, AgentProfile, AgentProfileRevision, AgentRun, ApiCredential, Assessment, DeviceBinding, FamilyGrant,
-    Household, HouseholdMember, HouseholdMembership, MemberAssignment, Observation, SessionRecord, UserAccount,
+    Household, HouseholdMember, HouseholdMembership, MemberAssignment, Observation, OutboxEvent, SessionRecord, UserAccount,
     UserNotification,
 )
 from .schemas import (
@@ -22,7 +27,9 @@ from .schemas import (
     GrantResult, HouseholdMemberCreateInput, HouseholdMemberResult, InboxItem, MemberSessionResult, MemberTrend, PoopVisualDimension, PoopVisualProfile,
     AgentActionResult, AgentChatInput, AgentChatResult, AgentConversationResult,
     AgentConversationSummary, AgentMessageResult, AgentStatusResult,
+    AgentSessionAnalysisInput,
     AgentFeedbackInput, AgentFeedbackResult, DeviceResult, GrantListItem, HealthProfileInput, HealthProfileResult, MemoryCreateInput, MemoryResult, MemoryUpdateInput,
+    HealthActionFollowupResult, HealthActionFollowupUpdate,
     AgentProfileResult, AgentProfileUpdate,
     AgentHandoffResult, AgentProfileRevisionResult, AgentRunResult, AgentStepResult,
     SkillContractResult,
@@ -40,10 +47,10 @@ from .service import (
     authorize_household, authorize_member_view, claim_session, create_assessment_version,
     grant_family_view, hash_secret, ingest, member_trend, revoke_family_view,
 )
-from .agent import chat as agent_chat, resume_paused_chat
+from .agent import analyze_session as agent_analyze_session, chat as agent_chat, resume_paused_chat
 from .service import POLICY_VERSION
 from .memory import create_self_report, get_health_profile, list_memory, save_health_profile, update_memory
-from .inline_worker import inline_worker_loop, worker_runtime
+from .inline_worker import inline_worker_loop, run_inline_worker_cycle, worker_runtime
 from .agent_native import SKILLS, get_or_create_profile, profile_snapshot
 from .agent_loop import list_handoffs, list_steps
 from .skills import SKILL_CONTRACTS
@@ -55,11 +62,12 @@ from .community import list_posts as list_community_posts, publish as publish_co
 from .connections import create_request as create_agent_match, list_connections as list_agent_matches, respond as respond_agent_match, end as end_agent_match
 from .weekly_reports import generate as generate_weekly_report, list_reports as list_weekly_reports
 from .raw_data import complete_deletion as complete_raw_deletion, create_authorization as create_raw_authorization, list_authorizations as list_raw_authorizations, register_upload as register_raw_upload, revoke as revoke_raw_authorization
+from .longitudinal import list_followups, update_followup
 
 
 vbot_navigator = (
     VBotHttpNavigator(settings.vbot_bridge_url, settings.vbot_bridge_timeout_seconds)
-    if settings.vbot_bridge_enabled
+    if settings.legacy_robot_enabled and settings.vbot_bridge_enabled
     else UnavailableVBotNavigator()
 )
 
@@ -124,6 +132,12 @@ robot_service.set_event_sink(persist_robot_runtime)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    blockers = settings.production_blockers()
+    invalid_environment = "app_env_invalid" in blockers
+    if invalid_environment or (settings.app_env == "production" and blockers):
+        raise RuntimeError(
+            "Unsafe production configuration: " + ", ".join(blockers)
+        )
     if settings.auto_create_schema:
         Base.metadata.create_all(bind=engine)
     if settings.bootstrap_demo_device:
@@ -211,10 +225,40 @@ app = FastAPI(title="PoopSense API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Device-Key", "X-Household-Key"],
+    allow_headers=[
+        "Authorization", "Content-Type", "X-Client-Session", "X-Device-Key",
+        "X-Household-Key", "X-Request-ID",
+    ],
 )
+
+
+@app.middleware("http")
+async def operational_headers(request: Request, call_next):
+    supplied_request_id = request.headers.get("x-request-id", "")
+    request_id = (
+        supplied_request_id
+        if 0 < len(supplied_request_id) <= 80
+        and all(char.isalnum() or char in "-_." for char in supplied_request_id)
+        else uuid.uuid4().hex
+    )
+    if (not settings.legacy_robot_enabled
+            and request.url.path.startswith("/api/v1/households/")
+            and "/robot/" in request.url.path):
+        response = JSONResponse(status_code=404, content={"detail": {"code": "ROBOT_FEATURE_DISABLED"}})
+    else:
+        response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.path.startswith("/api/") or request.url.path == "/ready":
+        response.headers["Cache-Control"] = "no-store"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    return response
 
 
 @app.get("/health")
@@ -224,18 +268,54 @@ def health():
 
 @app.get("/ready")
 def ready(db: Session = Depends(get_db)):
-    """Report whether the local demo dependencies are ready without exposing secrets."""
+    """Report runtime readiness and production gaps without exposing secrets."""
     db.execute(select(1)).scalar_one()
+    blockers = settings.production_blockers()
     return {
         "status": "ready",
+        "app_env": settings.app_env,
         "database": "ok",
+        "database_dialect": settings.database_dialect,
+        "production_ready": not blockers,
+        "production_blockers": list(blockers),
+        "schema_strategy": "auto_create" if settings.auto_create_schema else "migrations",
         "agent_configured": bool(settings.llm_api_key),
         "proactive_enabled": bool(
             settings.llm_api_key and settings.llm_proactive_enabled
         ),
+        "worker_strategy": settings.worker_strategy,
+        "http_worker_enabled": settings.http_worker_enabled,
         "worker_enabled": settings.inline_worker_enabled,
         "worker_running": worker_runtime.running,
         "worker_last_error": worker_runtime.last_error,
+    }
+
+
+@app.post("/api/internal/worker/run")
+def run_external_worker(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Drain one bounded outbox batch for a scheduler or dedicated worker host."""
+    if not settings.http_worker_enabled or not settings.worker_token:
+        raise HTTPException(status_code=404, detail="external worker is not enabled")
+    prefix = "Bearer "
+    supplied = authorization[len(prefix):] if authorization and authorization.startswith(prefix) else ""
+    if not supplied or not secrets.compare_digest(supplied, settings.worker_token):
+        raise HTTPException(status_code=401, detail="invalid worker credential")
+
+    processed = run_inline_worker_cycle()
+    queue_counts = {
+        queue_status: db.scalar(
+            select(func.count()).select_from(OutboxEvent).where(OutboxEvent.status == queue_status)
+        ) or 0
+        for queue_status in ("pending", "retry", "processing", "dead_letter")
+    }
+    return {
+        "status": "ok",
+        "processed": processed,
+        "queue": queue_counts,
+        "run_at": datetime.now(timezone.utc),
     }
 
 
@@ -427,6 +507,76 @@ def receive_device_session(
     )
 
 
+class SensorSimulationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: uuid.UUID
+    scenario: Literal["normal", "dry", "loose", "uncertain", "redline"]
+    member_id: Literal["m_001", "m_002"] | None = None
+    timestamp: datetime
+
+
+def simulation_available(household_id: str) -> bool:
+    # Serverless temporary SQLite files are not shared between instances. Do not
+    # offer a write/read demo that can silently lose the just-created record.
+    ephemeral = bool(os.getenv("VERCEL")) and settings.database_dialect == "sqlite"
+    return not ephemeral and settings.app_env in {"demo", "development"} and settings.bootstrap_demo_device and household_id == "hh_001"
+
+
+@app.get("/api/v1/households/{household_id}/sensor-simulation")
+def sensor_simulation_status(household_id: str, x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    auth = authorize_household(db, household_id, x_household_key)
+    enabled = simulation_available(household_id) and auth.user_id == "u_owner" and auth.role == "owner"
+    return {"enabled": enabled, "reason": "temporary_storage" if bool(os.getenv("VERCEL")) and settings.database_dialect == "sqlite" else None}
+
+
+@app.post("/api/v1/households/{household_id}/sensor-simulation", status_code=202)
+def simulate_sensor(household_id: str, payload: SensorSimulationInput,
+                    x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    if not simulation_available(household_id):
+        raise HTTPException(404, detail={"code": "SIMULATION_DISABLED"})
+    auth = authorize_household(db, household_id, x_household_key, {"owner"})
+    if auth.user_id != "u_owner":
+        raise HTTPException(403, detail={"code": "DEMO_IDENTITY_REQUIRED"})
+    # Only synthetic presets in the seeded demonstration household. Never expose
+    # device credentials to a browser or offer arbitrary observation injection.
+    session_id = f"sim_{payload.request_id.hex}"
+    existing = db.scalar(select(SessionRecord).where(SessionRecord.external_session_id == session_id))
+    now = datetime.now(timezone.utc)
+    if payload.timestamp.tzinfo is None:
+        raise HTTPException(422, detail={"code": "TIMEZONE_REQUIRED"})
+    if not existing:
+        if abs((now - payload.timestamp).total_seconds()) > 600:
+            raise HTTPException(422, detail={"code": "SIMULATION_TIMESTAMP_EXPIRED"})
+        count = db.scalar(select(func.count()).select_from(SessionRecord).where(
+            SessionRecord.household_id == household_id,
+            SessionRecord.external_session_id.startswith("sim_"),
+            SessionRecord.received_at > now - timedelta(hours=1),
+        ))
+        if count >= 60:
+            raise HTTPException(429, detail={"code": "SIMULATION_LIMIT_REACHED"})
+    confidence = .3 if payload.scenario == "uncertain" else .95
+    values = {"shape": {"dry": "hard", "loose": "loose"}.get(payload.scenario, "normal"),
+              "color": "red" if payload.scenario == "redline" else "brown", "odor": "moderate"}
+    device_payload = DeviceSessionInput.model_validate({
+        "schema_version": "1.0", "session_id": session_id,
+        "correlation_id": f"simulation:{payload.scenario}:{payload.member_id or 'pending'}",
+        "device_id": "dev_001", "household_id": household_id,
+        "firmware_version": "simulation", "model_version": "sensor-simulation-v1",
+        "sequence_number": int(payload.timestamp.timestamp() * 1000), "source": "device",
+        "timestamp": payload.timestamp, "end_timestamp": payload.timestamp, "duration_s": 0,
+        "clock_status": "synced", "presence_state": "present", "collection_state": "completed",
+        "observations": {key: {"value": value, "confidence": confidence,
+                               "source": "adapter", "model_version": "sensor-simulation-v1"}
+                         for key, value in values.items()},
+        "quality": {"overall_confidence": confidence, "reasons": ["synthetic_demo"]},
+    })
+    record, assignment, assessment, duplicate = ingest(db, device_payload, "dev-secret")
+    if payload.member_id and assignment.assignment_status == "pending_claim":
+        assignment = claim_session(db, record, ClaimInput(member_id=payload.member_id))
+    return {"session_id": session_id, "duplicate": duplicate, "simulated": True,
+            "assignment_status": assignment.assignment_status, "assessment_status": assessment.status}
+
+
 @app.post("/api/v1/raw-data-uploads", response_model=RawDataUploadResult, status_code=status.HTTP_202_ACCEPTED)
 def receive_raw_data_upload(payload: RawDataUploadInput, x_device_key: str = Header(...),
                             db: Session = Depends(get_db)):
@@ -598,12 +748,39 @@ def chat_with_agent(household_id: str, payload: AgentChatInput,
     return AgentChatResult(
         conversation_id=result["conversation"].id,
         message=AgentMessageResult(message_id=message.id, role=message.role, content=message.content,
-                                   created_at=message.created_at),
+                                   created_at=message.created_at, metadata=message.message_metadata),
         decision=result["decision"], allowed_actions=result["allowed_actions"],
         authorization_basis=result["authorization_basis"], policy_version=message.policy_version,
         model_version=message.model_version,
         delegated_agent=result["delegated_agent"], skill=result["skill"],
         skill_version=result["skill_version"], run_id=result["run"].id,
+        report=result.get("report"),
+    )
+
+
+@app.post(
+    "/api/v1/households/{household_id}/agent/session-analysis",
+    response_model=AgentChatResult,
+)
+def analyze_sensor_session(household_id: str, payload: AgentSessionAnalysisInput,
+                           x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    auth = authorize_household(db, household_id, x_household_key)
+    result = agent_analyze_session(
+        db, auth, payload.member_id, payload.session_id, payload.conversation_id,
+    )
+    message = result["message"]
+    return AgentChatResult(
+        conversation_id=result["conversation"].id,
+        message=AgentMessageResult(
+            message_id=message.id, role=message.role, content=message.content,
+            created_at=message.created_at, metadata=message.message_metadata,
+        ),
+        decision=result["decision"], allowed_actions=result["allowed_actions"],
+        authorization_basis=result["authorization_basis"],
+        policy_version=message.policy_version, model_version=message.model_version,
+        delegated_agent=result["delegated_agent"], skill=result["skill"],
+        skill_version=result["skill_version"], run_id=result["run"].id,
+        report=result["report"],
     )
 
 
@@ -976,6 +1153,31 @@ def rate_agent_message(household_id: str, message_id: int, payload: AgentFeedbac
     )
 
 
+@app.get(
+    "/api/v1/households/{household_id}/members/{member_id}/action-followups",
+    response_model=list[HealthActionFollowupResult],
+)
+def member_action_followups(household_id: str, member_id: str,
+                            x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    auth = authorize_household(db, household_id, x_household_key)
+    return [HealthActionFollowupResult(**item) for item in list_followups(db, auth, member_id)]
+
+
+@app.put(
+    "/api/v1/households/{household_id}/members/{member_id}/action-followups/{followup_id}",
+    response_model=HealthActionFollowupResult,
+)
+def revise_action_followup(household_id: str, member_id: str, followup_id: str,
+                           payload: HealthActionFollowupUpdate,
+                           x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    auth = authorize_household(db, household_id, x_household_key)
+    result = update_followup(
+        db, auth, member_id, followup_id, payload.adoption_status,
+        payload.perceived_outcome, payload.note,
+    )
+    return HealthActionFollowupResult(**result)
+
+
 @app.post(
     "/api/v1/households/{household_id}/members/{member_id}/memory",
     response_model=MemoryResult,
@@ -1013,7 +1215,8 @@ def conversation_history(household_id: str, conversation_id: str,
     ).order_by(AgentMessage.id)).all()
     return AgentConversationResult(
         conversation_id=conversation.id, member_id=conversation.subject_member_id,
-        messages=[AgentMessageResult(message_id=m.id, role=m.role, content=m.content, created_at=m.created_at)
+        messages=[AgentMessageResult(message_id=m.id, role=m.role, content=m.content, created_at=m.created_at,
+                                     metadata=m.message_metadata)
                   for m in messages],
     )
 
@@ -1074,7 +1277,9 @@ def member_sessions(household_id: str, member_id: str,
         variant = shape_variants.get(shape.value if shape else "", "uncertain")
         reliable_visual = assessment.reliable and variant != "uncertain"
         results.append(MemberSessionResult(
-            session_id=record.external_session_id, occurred_at=record.occurred_at,
+            simulated=record.model_version == "sensor-simulation-v1" or record.external_session_id.startswith("demo_"),
+            session_id=record.external_session_id,
+            occurred_at=record.occurred_at if record.occurred_at.tzinfo else record.occurred_at.replace(tzinfo=timezone.utc),
             assignment_version=assignment.version, assessment_status=assessment.status,
             risk_level=assessment.risk_level, message=assessment.message,
             visual_profile=PoopVisualProfile(

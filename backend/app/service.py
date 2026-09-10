@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -176,8 +176,8 @@ def ingest(db: Session, payload: DeviceSessionInput, api_key: str):
         model_version=payload.model_version,
         sequence_number=payload.sequence_number,
         source=payload.source,
-        occurred_at=payload.timestamp,
-        end_timestamp=payload.end_timestamp,
+        occurred_at=payload.timestamp.astimezone(timezone.utc),
+        end_timestamp=payload.end_timestamp.astimezone(timezone.utc),
         received_at=received_at,
         duration_s=payload.duration_s,
         clock_status=payload.clock_status,
@@ -389,6 +389,7 @@ def member_trend(db: Session, household_id: str, member_id: str, days: int) -> d
     valid_ids = [record.id for record, assessment in rows if assessment.reliable]
     dimensions: dict[str, dict[str, int]] = {}
     observations_by_dimension: dict[str, list[Observation]] = {}
+    observations_by_session: dict[int, dict[str, Observation]] = {}
     if valid_ids:
         observations = db.scalars(select(Observation).where(
             Observation.session_id.in_(valid_ids), Observation.value.is_not(None)
@@ -397,6 +398,7 @@ def member_trend(db: Session, household_id: str, member_id: str, days: int) -> d
             categories = dimensions.setdefault(item.dimension, {})
             categories[item.value] = categories.get(item.value, 0) + 1
             observations_by_dimension.setdefault(item.dimension, []).append(item)
+            observations_by_session.setdefault(item.session_id, {})[item.dimension] = item
     rendered = {}
     for dimension, categories in dimensions.items():
         total = sum(categories.values())
@@ -447,6 +449,95 @@ def member_trend(db: Session, household_id: str, member_id: str, days: int) -> d
             break
     valid_count = len(valid_ids)
     coverage = valid_count / assigned_count if assigned_count else 0.0
+    required_baseline_samples = 5
+    all_time_valid = db.scalar(
+        select(func.count(SessionRecord.id))
+        .join(MemberAssignment, MemberAssignment.session_id == SessionRecord.id)
+        .join(Assessment, Assessment.session_id == SessionRecord.id)
+        .where(
+            SessionRecord.household_id == household_id,
+            MemberAssignment.active.is_(True),
+            MemberAssignment.assignment_status == "confirmed",
+            MemberAssignment.member_id == member_id,
+            Assessment.active.is_(True),
+            Assessment.reliable.is_(True),
+        )
+    ) or 0
+    baseline_ready = all_time_valid >= required_baseline_samples
+
+    week_count = min(12, max(1, (days + 6) // 7))
+    current_week_start = (
+        datetime.now(timezone.utc) - timedelta(days=datetime.now(timezone.utc).weekday())
+    ).date()
+    weekly_buckets = {
+        current_week_start - timedelta(weeks=offset): {
+            "assigned_sessions": 0, "valid_sessions": 0, "shapes": {},
+        }
+        for offset in range(week_count)
+    }
+    for record, assessment in rows:
+        week_start_date = (record.occurred_at - timedelta(days=record.occurred_at.weekday())).date()
+        bucket = weekly_buckets.get(week_start_date)
+        if bucket is None:
+            continue
+        bucket["assigned_sessions"] += 1
+        if not assessment.reliable:
+            continue
+        bucket["valid_sessions"] += 1
+        shape = observations_by_session.get(record.id, {}).get("shape")
+        if shape and shape.value:
+            bucket["shapes"][shape.value] = bucket["shapes"].get(shape.value, 0) + 1
+    weekly_series = []
+    for week_start_date in sorted(weekly_buckets)[-12:]:
+        bucket = weekly_buckets[week_start_date]
+        shapes = bucket["shapes"]
+        shape_total = sum(shapes.values())
+        dry_count = sum(shapes.get(value, 0) for value in ("hard", "compact", "scattered"))
+        loose_count = sum(shapes.get(value, 0) for value in ("loose", "irregular"))
+        normal_count = sum(shapes.get(value, 0) for value in ("normal", "elongated"))
+        weekly_series.append({
+            "week_start": week_start_date.isoformat(),
+            "week_end": (week_start_date + timedelta(days=6)).isoformat(),
+            "assigned_sessions": bucket["assigned_sessions"],
+            "valid_sessions": bucket["valid_sessions"],
+            "coverage": (
+                round(bucket["valid_sessions"] / bucket["assigned_sessions"], 4)
+                if bucket["assigned_sessions"]
+                else 0.0
+            ),
+            "normal_ratio": round(normal_count / shape_total, 4) if shape_total else None,
+            "dry_ratio": round(dry_count / shape_total, 4) if shape_total else None,
+            "loose_ratio": round(loose_count / shape_total, 4) if shape_total else None,
+            "dominant_shape": max(shapes, key=shapes.get) if shapes else None,
+        })
+
+    shape_items = sorted(
+        observations_by_dimension.get("shape", []),
+        key=lambda item: valid_ids.index(item.session_id),
+    )
+    if len(shape_items) < 2:
+        latest_change = {
+            "status": "insufficient", "previous_shape": None,
+            "current_shape": shape_items[-1].value if shape_items else None,
+            "message": "还需要至少两次可靠记录，才能比较前后变化。",
+        }
+    else:
+        previous_shape, current_shape = shape_items[-2].value, shape_items[-1].value
+        normal_shapes = {"normal", "elongated"}
+        previous_normal, current_normal = previous_shape in normal_shapes, current_shape in normal_shapes
+        if previous_shape == current_shape:
+            change_status, change_message = "stable", "最近两次形态相近，暂未看到明显变化。"
+        elif not previous_normal and current_normal:
+            change_status, change_message = "improved", "下一次可靠记录已回到常见范围。"
+        elif previous_normal and not current_normal:
+            change_status, change_message = "worsened", "最新一次形态偏离了原来的常见范围。"
+        else:
+            change_status, change_message = "changed", "最近两次形态不同，建议继续观察下一次。"
+        latest_change = {
+            "status": change_status, "previous_shape": previous_shape,
+            "current_shape": current_shape,
+            "message": f"{change_message} 这只表示时间上的变化，不证明由某项建议导致。",
+        }
     return {
         "household_id": household_id,
         "member_id": member_id,
@@ -458,4 +549,17 @@ def member_trend(db: Session, household_id: str, member_id: str, days: int) -> d
         "frequency_per_week": round(valid_count / days * 7, 2),
         "consecutive_abnormal": consecutive,
         "dimensions": rendered,
+        "baseline_progress": {
+            "status": "established" if baseline_ready else "collecting",
+            "current_valid_sessions": all_time_valid,
+            "required_valid_sessions": required_baseline_samples,
+            "remaining_sessions": max(0, required_baseline_samples - all_time_valid),
+            "message": (
+                "已经有足够的可靠记录，可以开始和你自己的日常节奏比较。"
+                if baseline_ready else
+                f"基线积累中，再获得 {required_baseline_samples - all_time_valid} 次可靠记录后开始个人比较。"
+            ),
+        },
+        "weekly_series": weekly_series,
+        "latest_change": latest_change,
     }

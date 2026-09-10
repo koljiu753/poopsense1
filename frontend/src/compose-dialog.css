@@ -1,0 +1,78 @@
+dialog.compose-dialog {
+  position: fixed;
+  inset: var(--compose-viewport-top, 0px) 0 var(--compose-viewport-bottom, 0px);
+  width: min(680px, calc(100% - 32px));
+  max-width: none;
+  max-height: 85vh;
+  max-height: 85dvh;
+  max-height: min(85dvh, calc(var(--compose-viewport-height, 100dvh) * .85));
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 3px solid #0b0b0b;
+  border-radius: 20px;
+  background: #fff8e9;
+  color: #0b0b0b;
+  box-shadow: 7px 7px 0 #0b0b0b;
+  font: 16px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+dialog.compose-dialog:not([open]) { display: none; }
+dialog.compose-dialog[open] { display: flex; flex-direction: column; }
+dialog.compose-dialog::backdrop { background: #0b0b0b9e; }
+dialog.compose-dialog[data-modal-fallback="true"] { z-index: 1000; box-shadow: 7px 7px 0 #0b0b0b, 0 0 0 100vmax #0b0b0b9e; }
+dialog.compose-dialog > .compose-dialog-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 3px solid #0b0b0b;
+  background: #ffdc18;
+}
+dialog.compose-dialog .compose-dialog-head h2 {
+  min-width: 0;
+  margin: 0;
+  color: #0b0b0b;
+  font: 900 22px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif;
+  overflow-wrap: anywhere;
+}
+dialog.compose-dialog .compose-dialog-close {
+  flex-shrink: 0;
+  min-width: 76px;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 2px solid #0b0b0b;
+  border-radius: 9px;
+  background: #ff087f;
+  color: #0b0b0b;
+  box-shadow: none;
+  font: 850 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+  cursor: pointer;
+}
+dialog.compose-dialog > .compose-dialog-body {
+  min-height: 0;
+  padding: 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+dialog.compose-dialog .compose-dialog-body select { align-self: start; }
+dialog.compose-dialog :focus-visible { outline: 3px solid #0964e8; outline-offset: 3px; }
+dialog.compose-dialog .compose-dialog-head h2:focus { outline: none; }
+
+@media (max-width: 700px) {
+  dialog.compose-dialog {
+    inset: auto 0 var(--compose-viewport-bottom, 0px);
+    width: 100%;
+    margin: 0;
+    border-bottom: 0;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -5px 0 #0b0b0b;
+  }
+  dialog.compose-dialog > .compose-dialog-head { padding: 14px 16px; gap: 12px; }
+  dialog.compose-dialog .compose-dialog-head h2 { font-size: 20px; }
+  dialog.compose-dialog > .compose-dialog-body { padding: 16px 16px max(20px, env(safe-area-inset-bottom)); }
+}

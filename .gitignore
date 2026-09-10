@@ -43,3 +43,7 @@ Thumbs.db
 .codex-tmp/
 .claude/
 tmp/
+
+.vercel/
+.codex-qa/
+frontend/artifacts/

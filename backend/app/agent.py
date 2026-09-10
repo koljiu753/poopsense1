@@ -1,3 +1,4 @@
+import hashlib
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -9,10 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import AgentAction, AgentConversation, AgentFeedback, AgentHandoff, AgentMemoryEntry, AgentMessage, AgentRun, AgentStep, Assessment, MemberAssignment, OutboxEvent, SessionRecord
+from .models import AgentAction, AgentConversation, AgentFeedback, AgentHandoff, AgentMemoryEntry, AgentMessage, AgentRun, AgentStep, Assessment, MemberAssignment, Observation, OutboxEvent, SessionRecord
 from .service import AuthContext, POLICY_VERSION, authorize_member_view, member_trend
 from .agent_native import AGENT_SPECS, get_or_create_profile, in_quiet_hours, route_skill
 from .agent_loop import cancel_run, fail_run, finish_run, pause_run, resume_run, start_chat_run
+from .longitudinal import ensure_followup
 from .skills import (
     contract_for, should_pause_for_confirmation, validate_skill_input,
     validate_skill_output,
@@ -68,10 +70,10 @@ def authorization_basis(db: Session, auth: AuthContext, member_id: str) -> str:
 def safety_decision(message: str) -> tuple[str, list[str]]:
     if any(word in message for word in RED_FLAG_WORDS):
         return "urgent_care", ["explain_safety_limit", "recommend_urgent_care"]
+    if any(word in message for word in ("喝水", "饮水", "补水", "水分")):
+        return "health_education", ["explain", "ask_follow_up"]
     if any(word in message for word in ("趋势", "最近", "记录")):
         return "explain_trend", ["read_authorized_trend", "explain"]
-    if any(word in message for word in ("喝水", "饮水", "补水", "水分")):
-        return "health_education", ["explain", "ask_follow_up", "offer_water_pickup"]
     return "health_education", ["explain", "ask_follow_up"]
 
 
@@ -93,10 +95,191 @@ def call_model(messages: list[dict[str, str]]) -> str:
         raise HTTPException(status_code=502, detail={"code": "MODEL_PROVIDER_FAILED"}) from exc
 
 
+DIMENSION_LABELS = {"shape": "形状", "color": "颜色", "odor": "气味"}
+VALUE_LABELS = {
+    "compact": "紧实", "elongated": "长条", "scattered": "一颗颗、偏干硬",
+    "irregular": "不规则", "normal": "常见范围", "hard": "偏干硬",
+    "loose": "偏稀", "brown": "棕色", "red": "红色", "black": "黑色",
+    "moderate": "中等", "mild": "较轻", "strong": "较明显",
+}
+
+
+def build_session_analysis(db: Session, auth: AuthContext, member_id: str,
+                           external_session_id: str) -> tuple[SessionRecord, Assessment, dict[str, Any]]:
+    """Build a deterministic, auditable report from one confirmed sensor session."""
+    record = db.scalar(select(SessionRecord).where(
+        SessionRecord.external_session_id == external_session_id,
+        SessionRecord.household_id == auth.household_id,
+    ))
+    if not record:
+        raise HTTPException(status_code=404, detail={"code": "SESSION_NOT_FOUND"})
+    assignment = db.scalar(select(MemberAssignment).where(
+        MemberAssignment.session_id == record.id,
+        MemberAssignment.active.is_(True),
+    ))
+    if (not assignment or assignment.assignment_status != "confirmed" or
+            assignment.member_id != member_id):
+        raise HTTPException(status_code=403, detail={"code": "SESSION_MEMBER_ACCESS_DENIED"})
+    assessment = db.scalar(select(Assessment).where(
+        Assessment.session_id == record.id,
+        Assessment.active.is_(True),
+    ))
+    if not assessment:
+        raise HTTPException(status_code=409, detail={"code": "ASSESSMENT_NOT_READY"})
+    observations = list(db.scalars(select(Observation).where(
+        Observation.session_id == record.id,
+        Observation.dimension.in_(("shape", "color", "odor")),
+    )).all())
+    evidence = {item.dimension: item for item in observations}
+    findings = [
+        {
+            "dimension": dimension,
+            "label": DIMENSION_LABELS[dimension],
+            "value": VALUE_LABELS.get(item.value or "", item.value or "未获得"),
+            "confidence": item.confidence,
+            "source": item.source,
+        }
+        for dimension in ("shape", "color", "odor")
+        if (item := evidence.get(dimension)) is not None
+        and item.value is not None and item.confidence is not None
+    ]
+    shape_value = evidence.get("shape").value if evidence.get("shape") else None
+    dry_signal = shape_value in {"hard", "compact", "scattered"} or any(
+        phrase in assessment.message for phrase in ("一颗颗", "干硬", "偏硬")
+    )
+    generated_at = datetime.now(timezone.utc)
+    if not assessment.reliable:
+        report = {
+            "session_id": external_session_id, "generated_at": generated_at.isoformat(),
+            "status": "insufficient", "reliable": False,
+            "headline": "这次先不急着下结论",
+            "summary": "本次无法可靠判断。数据缺失或置信度不足，因此不会生成定向健康建议。",
+            "findings": [],
+            "recommendations": [{
+                "category": "observation", "title": "等待下一次可靠记录",
+                "guidance": "保持日常即可；设备获得完整信号后，我会重新自动分析。",
+                "timing": "next_time",
+            }],
+            "next_step": "等待可靠数据后再更新个人趋势。",
+        }
+    elif assessment.risk_level == "redline":
+        report = {
+            "session_id": external_session_id, "generated_at": generated_at.isoformat(),
+            "status": "urgent", "reliable": True,
+            "headline": "这次信号需要优先处理",
+            "summary": assessment.message,
+            "findings": findings,
+            "recommendations": [
+                {
+                    "category": "care", "title": "尽快联系线下医生",
+                    "guidance": "如同时有明显出血、黑便、剧烈腹痛、昏厥或意识异常，请立即寻求急诊帮助。",
+                    "timing": "now",
+                },
+                {
+                    "category": "observation", "title": "保留关键信息",
+                    "guidance": "记录发生时间和伴随症状，便于向专业医护人员清楚说明。",
+                    "timing": "now",
+                },
+            ],
+            "next_step": "优先寻求专业帮助，不以生活方式建议替代就医。",
+        }
+    else:
+        headline = "这次有点偏干，今天先把节奏调柔和" if dry_signal else "这次信号已读懂，继续保持稳定节奏"
+        hydration = (
+            "今天分次、少量补充水分；如医生曾要求限液，请以医嘱为准。"
+            if dry_signal else "按口渴感和日常习惯规律饮水，避免一次性大量补充。"
+        )
+        diet = (
+            "在可耐受范围内循序增加蔬果、全谷物等含纤维食物，并观察身体反应。"
+            if dry_signal else "保持规律吃饭和多样化饮食，不需要因为单次记录突然大幅改变。"
+        )
+        report = {
+            "session_id": external_session_id, "generated_at": generated_at.isoformat(),
+            "status": "ready", "reliable": True,
+            "headline": headline, "summary": assessment.message,
+            "findings": findings,
+            "recommendations": [
+                {"category": "hydration", "title": "补水", "guidance": hydration, "timing": "today"},
+                {"category": "diet", "title": "饮食", "guidance": diet, "timing": "today"},
+                {
+                    "category": "movement", "title": "活动",
+                    "guidance": "久坐时安排轻松走动；以舒适为准，出现不适就停止。",
+                    "timing": "today",
+                },
+                {
+                    "category": "observation", "title": "继续观察",
+                    "guidance": "留意下一次形态、排便是否费力，以及腹痛、血便或黑便等变化。",
+                    "timing": "next_time",
+                },
+            ],
+            "next_step": "记录今天是否采用建议，我会结合下一次可靠记录跟进变化。",
+        }
+    return record, assessment, report
+
+
+def session_policy(report: dict[str, Any]) -> tuple[str, list[str], str, str]:
+    if report["status"] == "urgent":
+        return "urgent_care", ["explain_safety_limit", "recommend_urgent_care"], "health_doctor", "urgent_care"
+    if report["status"] == "insufficient":
+        return "insufficient_data", ["explain_safety_limit"], "health_doctor", "explain_record"
+    actions = ["explain", "summarize_findings", "provide_lifestyle_plan"]
+    return "health_education", actions, "health_doctor", "comprehensive_review"
+
+
 def chat(db: Session, auth: AuthContext, member_id: str, text: str,
-         conversation_id: str | None = None, model_caller=call_model) -> dict[str, Any]:
+         conversation_id: str | None = None, model_caller=call_model,
+         session_external_id: str | None = None) -> dict[str, Any]:
     basis = authorization_basis(db, auth, member_id)
     now = datetime.now(timezone.utc)
+    session_record: SessionRecord | None = None
+    session_report: dict[str, Any] | None = None
+    session_audit_key: str | None = None
+    if session_external_id:
+        session_record, assessment, session_report = build_session_analysis(
+            db, auth, member_id, session_external_id,
+        )
+        followup = ensure_followup(db, auth, member_id, session_record, session_report)
+        session_report["followup_id"] = followup.id if followup else None
+        assignment = db.scalar(select(MemberAssignment).where(
+            MemberAssignment.session_id == session_record.id,
+            MemberAssignment.active.is_(True),
+        ))
+        cache_scope = json.dumps([
+            session_record.id, assessment.version, assignment.id if assignment else None,
+            member_id, auth.user_id, POLICY_VERSION,
+        ], ensure_ascii=True)
+        session_audit_key = "agent-session-analysis:v2:" + hashlib.sha256(cache_scope.encode()).hexdigest()
+        previous = db.scalar(select(AgentAction).where(
+            AgentAction.idempotency_key == session_audit_key,
+            AgentAction.status == "succeeded",
+        ))
+        if previous:
+            cached = previous.result
+            message = db.get(AgentMessage, cached.get("assistant_message_id"))
+            run = db.get(AgentRun, cached.get("run_id"))
+            conversation = db.get(AgentConversation, cached.get("conversation_id"))
+            if (message and run and conversation
+                    and conversation.household_id == auth.household_id
+                    and conversation.created_by_user_id == auth.user_id
+                    and conversation.subject_member_id == member_id
+                    and run.subject_member_id == member_id):
+                # Older cached analyses may predate longitudinal follow-ups. Keep the
+                # expensive Agent reply idempotent while enriching the deterministic
+                # report with the current follow-up link.
+                cached["report"] = session_report
+                previous.result = cached
+                if isinstance(message.message_metadata, dict):
+                    message.message_metadata = {**message.message_metadata, "report": session_report}
+                db.commit()
+                return {
+                    "conversation": conversation, "message": message,
+                    "decision": cached["decision"],
+                    "allowed_actions": cached["allowed_actions"],
+                    "authorization_basis": basis,
+                    "delegated_agent": cached["delegated_agent"],
+                    "skill": cached["skill"], "skill_version": cached["skill_version"],
+                    "run": run, "report": session_report,
+                }
     conversation = db.get(AgentConversation, conversation_id) if conversation_id else None
     if conversation and (conversation.household_id != auth.household_id or
                          conversation.created_by_user_id != auth.user_id or
@@ -110,14 +293,20 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
         )
         db.add(conversation)
     user_message = AgentMessage(
-        conversation_id=conversation.id, role="user", content=text,
+        conversation_id=conversation.id, role="event" if session_report else "user", content=text,
         model_version=None, authorization_basis=basis, policy_version=POLICY_VERSION,
-        message_metadata={}, created_at=now,
+        message_metadata={
+            "trigger": "sensor_event" if session_report else "user_message",
+            "session_id": session_external_id,
+        } if session_report else {}, created_at=now,
     )
     db.add(user_message)
     db.flush()
-    decision, allowed = safety_decision(text)
-    delegated_agent, skill = route_skill(text, decision)
+    if session_report:
+        decision, allowed, delegated_agent, skill = session_policy(session_report)
+    else:
+        decision, allowed = safety_decision(text)
+        delegated_agent, skill = route_skill(text, decision)
     contract = contract_for(skill)
     if contract.agent != delegated_agent:
         raise HTTPException(status_code=500, detail={"code": "SKILL_AGENT_MISMATCH"})
@@ -141,6 +330,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
         skill_version=contract.version,
         context_domains=contract.context_domains,
         policy_version=POLICY_VERSION,
+        trigger="sensor_event" if session_report else "user_message",
     )
     if should_pause_for_confirmation(contract, text):
         pause_run(db, run, specialist_step, "high_impact_household_action")
@@ -193,6 +383,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
             safe_context = {
                 "decision": decision, "allowed_actions": allowed, "trend": trend,
                 "feedback_preferences": feedback_context,
+                "current_session": session_report,
                 "self_report_memory": [
                     {"source": item.source_type, "key": item.memory_key,
                      "content": item.content, "version": item.version}
@@ -204,13 +395,15 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
                 select(SessionRecord, Assessment)
                 .join(MemberAssignment, MemberAssignment.session_id == SessionRecord.id)
                 .join(Assessment, Assessment.session_id == SessionRecord.id)
-                .where(MemberAssignment.active.is_(True), MemberAssignment.member_id == member_id,
+                .where(SessionRecord.household_id == auth.household_id,
+                       MemberAssignment.active.is_(True), MemberAssignment.member_id == member_id,
                        Assessment.active.is_(True))
                 .order_by(SessionRecord.occurred_at.desc()).limit(5)
             ).all()
             safe_context = {
                 "decision": decision, "allowed_actions": allowed, "trend": trend,
                 "feedback_preferences": feedback_context,
+                "current_session": session_report,
                 "recent_assessments": [
                     {"at": r.occurred_at.isoformat(), "status": a.status,
                      "risk_level": a.risk_level, "message": a.message}
@@ -227,26 +420,37 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
         f"专业职责：{AGENT_SPECS[delegated_agent]['purpose']}。"
         f"你的 Soul：{json.dumps(profile.soul, ensure_ascii=False)}。"
         "规则引擎已经决定风险等级和允许动作；"
+        "当前产品仅包含便便传感器、健康解释、生活建议与长期追踪，不提供机械臂、机器狗、取水或递水执行服务；不要提出或承诺这些服务。"
         "你只能在 allowed_actions 内组织语言，不得诊断、改写风险等级、扩大接收人或执行未授权动作。"
         "若 decision=urgent_care，必须明确建议尽快线下就医；严重或紧急症状建议急诊。"
         "低质量或缺失数据必须明确说无法可靠判断。回答简洁、中文。\n"
+        "如果 current_session 存在，它是确定性规则生成的结构化报告；只补充易懂解释，不得改写其结论、建议类别或下一步。\n"
         f"安全上下文：{json.dumps(safe_context, ensure_ascii=False)}"
     )
     audit = AgentAction(
-        session_id=None, subject_member_id=member_id, grant_id=(int(basis.split(":")[1]) if basis.startswith("family_grant:") else None),
-        action_type="agent_chat_response", status="processing", recipient_id=auth.user_id,
+        session_id=session_record.id if session_record else None, subject_member_id=member_id, grant_id=(int(basis.split(":")[1]) if basis.startswith("family_grant:") else None),
+        action_type="agent_session_analysis" if session_report else "agent_chat_response", status="processing", recipient_id=auth.user_id,
         authorization_basis=basis, policy_version=POLICY_VERSION, model_version=settings.llm_model,
         input_summary={"conversation_id": conversation.id, "message_id": user_message.id,
                        "decision": decision, "allowed_actions": allowed,
                        "delegated_agent": delegated_agent, "skill": skill,
-                       "skill_version": contract.version},
-        result={}, idempotency_key=f"agent-chat:{conversation.id}:{user_message.id}",
+                       "skill_version": contract.version,
+                       "session_id": session_external_id,
+                       "trigger": "sensor_event" if session_report else "user_message"},
+        result={}, idempotency_key=session_audit_key or f"agent-chat:{conversation.id}:{user_message.id}",
         created_at=now, processed_at=None,
     )
     db.add(audit)
     db.commit()
+    model_version_used = settings.llm_model
     try:
-        reply = model_caller([{"role": "system", "content": system}, {"role": "user", "content": text}])
+        try:
+            reply = model_caller([{"role": "system", "content": system}, {"role": "user", "content": text}])
+        except HTTPException:
+            if not session_report:
+                raise
+            reply = f"{session_report['summary']} {session_report['next_step']}"
+            model_version_used = "policy-engine"
         validate_skill_output(contract, {"reply": reply, "decision": decision})
         if skill == "comprehensive_review":
             review_now = datetime.now(timezone.utc)
@@ -273,14 +477,20 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
                 AgentMemoryEntry.subject_member_id == member_id,
                 AgentMemoryEntry.active.is_(True), AgentMemoryEntry.source_type == "self_report",
             )).all()
-            coach_context = {"trend": trend, "self_report_memory": [
+            coach_context = {"current_session": session_report, "trend": trend, "self_report_memory": [
                 {"key": item.memory_key, "content": item.content, "version": item.version}
                 for item in self_reports
             ], "allowed_actions": allowed}
-            coach_reply = model_caller([
-                {"role": "system", "content": "你是生活教练，只给低风险饮水、饮食、运动与作息行动，不诊断。只能使用以下最小上下文：" + json.dumps(coach_context, ensure_ascii=False)},
-                {"role": "user", "content": text},
-            ])
+            try:
+                coach_reply = model_caller([
+                    {"role": "system", "content": "你是生活教练，只给低风险饮水、饮食、运动与作息行动，不诊断。只能使用以下最小上下文：" + json.dumps(coach_context, ensure_ascii=False)},
+                    {"role": "user", "content": text},
+                ])
+            except HTTPException:
+                if not session_report:
+                    raise
+                coach_reply = "已按规则报告整理饮水、饮食、活动和观察建议。"
+                model_version_used = "policy-engine"
             coach_step.status = "succeeded"
             coach_step.output_summary = {"role": "lifestyle_review", "reply_length": len(coach_reply)}
             coach_step.completed_at = datetime.now(timezone.utc)
@@ -301,7 +511,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
                 payload={"decision": decision}, authorization_basis=basis,
                 status="accepted", created_at=coach_step.completed_at, accepted_at=coach_step.completed_at,
             ))
-            reply = f"健康医生复核：{reply}\n\n生活教练建议：{coach_reply}\n\n安全仲裁：以上内容受规则引擎约束，健康风险结论优先。"
+            reply = f"自动整理的健康参考：{reply}\n\n日常生活建议：{coach_reply}\n\n提醒：以上内容未经真人医生审核，不作为医疗诊断；安全提醒优先。"
             specialist_step = arbiter_step
     except HTTPException as exc:
         fail_run(db, run, specialist_step, str(exc.detail))
@@ -312,34 +522,53 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
         raise
     assistant = AgentMessage(
         conversation_id=conversation.id, role="assistant", content=reply,
-        model_version=settings.llm_model, authorization_basis=basis,
+        model_version=model_version_used, authorization_basis=basis,
         policy_version=POLICY_VERSION, message_metadata={
             "decision": decision, "allowed_actions": allowed,
             "delegated_agent": delegated_agent, "skill": skill,
             "skill_version": contract.version,
             "context_domains": list(contract.context_domains),
+            "report": session_report,
         },
         created_at=datetime.now(timezone.utc),
     )
     db.add(assistant)
     conversation.updated_at = assistant.created_at
     audit.status = "succeeded"
-    audit.result = {"assistant_message_pending_id": True, "decision": decision}
+    audit.model_version = model_version_used
+    audit.result = {"assistant_message_pending_id": True, "decision": decision,
+                    "report": session_report}
     audit.processed_at = assistant.created_at
     finish_run(db, run, specialist_step, {
         "decision": decision, "delegated_agent": delegated_agent,
         "skill": skill, "skill_version": contract.version,
         "assistant_message_pending_id": True,
+        "report_status": session_report["status"] if session_report else None,
     })
     db.commit()
     db.refresh(assistant)
     audit.result = {"assistant_message_id": assistant.id, "decision": decision,
-                    "delegated_agent": delegated_agent, "skill": skill}
+                    "delegated_agent": delegated_agent, "skill": skill,
+                    "skill_version": contract.version, "allowed_actions": allowed,
+                    "conversation_id": conversation.id, "run_id": run.id,
+                    "report": session_report}
     db.commit()
     return {"conversation": conversation, "message": assistant, "decision": decision,
             "allowed_actions": allowed, "authorization_basis": basis,
             "delegated_agent": delegated_agent, "skill": skill,
-            "skill_version": contract.version, "run": run}
+            "skill_version": contract.version, "run": run,
+            "report": session_report}
+
+
+def analyze_session(db: Session, auth: AuthContext, member_id: str,
+                    session_id: str, conversation_id: str | None = None,
+                    model_caller=call_model) -> dict[str, Any]:
+    return chat(
+        db, auth, member_id,
+        "新传感记录已到达。请自动完成本次分析并给出多方面行动建议。",
+        conversation_id=conversation_id, model_caller=model_caller,
+        session_external_id=session_id,
+    )
 
 
 def resume_paused_chat(db: Session, auth: AuthContext, run_id: str, confirmed: bool,

@@ -1,0 +1,330 @@
+/* Personal space: a familiar character above practical household controls. */
+.experience .settings-page {
+  --settings-gap: 20px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.experience .settings-page .settings-intro {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  align-items: center;
+  gap: 16px;
+  min-height: 220px;
+  margin-bottom: 28px;
+  padding: 28px 32px;
+  border: 3px solid var(--ink);
+  border-radius: 22px;
+  background: var(--pink);
+  background-image: radial-gradient(#0002 1px, transparent 1px);
+  background-size: 8px 8px;
+  box-shadow: 6px 6px 0 var(--ink);
+  isolation: isolate;
+}
+
+.experience .settings-page .settings-intro > div:first-child { min-width: 0; }
+.experience .settings-page .settings-intro small {
+  display: inline-block;
+  padding: 3px 9px;
+  border: 2px solid var(--ink);
+  background: var(--yellow);
+  font: 900 12px/1.5 "Arial Black", sans-serif;
+  letter-spacing: 2px;
+  transform: rotate(-3deg);
+}
+.experience .settings-page .settings-intro h1 {
+  margin: 16px 0 10px;
+  color: var(--ink);
+  font-size: clamp(26px, 3.2vw, 38px);
+  font-weight: 950;
+  line-height: 1.3;
+  letter-spacing: -1px;
+  overflow-wrap: anywhere;
+}
+.experience .settings-page .settings-intro p {
+  max-width: 28em;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.7;
+}
+.experience .settings-page .settings-keeper {
+  position: relative;
+  align-self: stretch;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-width: 0;
+}
+.experience .settings-page .settings-keeper::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 170px;
+  height: 170px;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 5px 5px 0 var(--ink);
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+}
+.experience .settings-page .settings-keeper img {
+  width: 200px;
+  max-width: 120%;
+  height: 175px;
+  object-fit: contain;
+  transform: rotate(-8deg);
+  filter: drop-shadow(3px 4px 0 #0005);
+}
+.experience .settings-page .settings-keeper > span {
+  position: relative;
+  margin-top: -4px;
+  padding: 3px 10px;
+  border: 2px solid var(--ink);
+  background: var(--cream);
+  font-size: 12px;
+  font-weight: 850;
+  transform: rotate(3deg);
+}
+
+.experience .settings-page .profile-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--settings-gap);
+  align-items: start;
+}
+.experience .settings-page .profile-grid > article {
+  min-width: 0;
+  margin: 0;
+  padding: 22px;
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  background: var(--cream);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+.experience .settings-page .sticker {
+  display: inline-block;
+  padding: 3px 7px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--yellow);
+  color: var(--ink);
+  box-shadow: none;
+  font: 900 10px/1.4 "Arial Black", "Microsoft YaHei", sans-serif;
+  letter-spacing: .8px;
+  transform: rotate(-3deg);
+}
+.experience .settings-page h2 {
+  margin: 12px 0 18px;
+  font-size: 23px;
+  font-weight: 900;
+  line-height: 1.4;
+}
+.experience .settings-page .profile-grid > .family-card {
+  background: var(--yellow);
+}
+.experience .settings-page .family-card > .sticker {
+  background: var(--cream);
+}
+.experience .settings-page .member-line {
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid #0b0b0b40;
+}
+.experience .settings-page .member-line > span:nth-child(2) { min-width: 0; }
+.experience .settings-page .member-line b { font-size: 16px; overflow-wrap: anywhere; }
+.experience .settings-page .member-line small { color: var(--muted); font-size: 12px; }
+.experience .settings-page .avatar {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  background: var(--pink);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 950;
+  transform: rotate(-4deg);
+}
+.experience .settings-page .member-line:nth-of-type(even) .avatar {
+  background: var(--blue);
+  color: white;
+  transform: rotate(4deg);
+}
+.experience .settings-page .member-line em {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--ink);
+  border-radius: 5px;
+  background: var(--cream);
+  font-size: 11px;
+}
+.experience .settings-page button:not(.toggle) {
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 2px solid var(--ink);
+  border-radius: 9px;
+  background: var(--cream);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.5;
+  box-shadow: none;
+}
+.experience .settings-page .family-card > button { width: 100%; margin-top: 8px; }
+.experience .settings-page .device-card {
+  order: 0;
+  grid-column: auto;
+  grid-template-columns: minmax(80px, .65fr) minmax(0, 1fr);
+  gap: 16px 14px;
+  padding-top: 56px !important;
+  background: var(--blue) !important;
+  color: white;
+}
+.experience .settings-page .device-card > .sticker { top: 20px; left: 22px; }
+.experience .settings-page .device-visual {
+  width: 100%;
+  height: 130px;
+  margin: 0;
+}
+.experience .settings-page .device-visual img {
+  filter: drop-shadow(4px 5px 0 #0006);
+  transform: rotate(-9deg);
+}
+.experience .settings-page .device-card h2 { margin: 0 0 8px; font-size: 22px; }
+.experience .settings-page .device-card p { margin: 8px 0; font-size: 14px; }
+.experience .settings-page .device-card small { margin: 0; font-size: 12px; line-height: 1.65; }
+.experience .settings-page .device-card .device-details {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #ffffff70;
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.experience .settings-page .device-card > button { grid-column: 1 / -1; width: 100%; background: var(--yellow); }
+.experience .settings-page .privacy-card { grid-column: 1 / -1; }
+.experience .settings-page .permission-line { border-top: 1px solid var(--line); padding: 16px 0; gap: 16px; }
+.experience .settings-page .permission-line > span { min-width: 0; }
+.experience .settings-page .permission-line b { font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
+.experience .settings-page .permission-line small { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.experience .settings-page .toggle {
+  flex: 0 0 62px;
+  width: 62px;
+  min-width: 62px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 2px solid var(--ink);
+  background: #d6d1c8;
+}
+.experience .settings-page .toggle::after {
+  width: 30px;
+  height: 30px;
+  top: 5px;
+  left: 4px;
+  background: var(--cream);
+}
+.experience .settings-page .toggle.active { background: var(--pink); }
+.experience .settings-page .toggle.active::after { left: 24px; }
+.experience .settings-page .privacy-note { margin: 10px 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.experience .settings-page details { min-width: 0; }
+.experience .settings-page summary { padding: 10px 0; color: var(--ink); font-size: 14px; font-weight: 750; }
+.experience .settings-page .manage-card > details:not(.settings-fold) { margin-top: 8px; border-top: 1px solid var(--line); }
+.experience .settings-page .settings-fold > summary {
+  position: relative;
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 0 35px 0 0;
+  list-style: none;
+}
+.experience .settings-page .settings-fold > summary::-webkit-details-marker { display: none; }
+.experience .settings-page .settings-fold > summary::after {
+  content: "+";
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  font: 500 28px/1 sans-serif;
+}
+.experience .settings-page .settings-fold[open] > summary::after { content: "−"; }
+.experience .settings-page .settings-fold > summary h2 { margin: 0; font-size: 21px; }
+.experience .settings-page .settings-fold > summary small { color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.6; }
+.experience .settings-page .settings-fold-body { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.experience .settings-page .raw-data-card,
+.experience .settings-page .agent-soul-card,
+.experience .settings-page .agent-activity-card { grid-column: 1 / -1; }
+.experience .settings-page .agent-soul-card .sticker { background: var(--pink); }
+.experience .settings-page .agent-activity-card .sticker { background: var(--blue); color: white; }
+.experience .settings-page label { font-size: 14px; line-height: 1.6; }
+.experience .settings-page label:not(:has(input[type="checkbox"])) { min-width: 0; }
+.experience .settings-page input:not([type="checkbox"]),
+.experience .settings-page select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font: 16px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.experience .settings-page .agent-soul-card label { display: grid; gap: 6px; margin-bottom: 14px; font-weight: 750; }
+.experience .settings-page .agent-soul-card .quiet-hours { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.experience .settings-page .agent-soul-card .settings-fold-body > button,
+.experience .settings-page .raw-consent-form > button,
+.experience .settings-page .advanced-settings button { background: var(--yellow); }
+.experience .settings-page .raw-consent-form { gap: 16px; }
+.experience .settings-page .raw-consent-form fieldset { min-width: 0; margin: 0; padding: 12px; border-radius: 9px; gap: 6px 16px; }
+.experience .settings-page .raw-consent-form fieldset label { display: flex; min-height: 44px; align-items: center; gap: 8px; font-weight: 500; }
+.experience .settings-page input[type="checkbox"] { flex: 0 0 20px; width: 20px; height: 20px; margin: 0; accent-color: var(--blue); }
+.experience .settings-page .raw-explicit-consent { display: flex; align-items: flex-start; gap: 10px; padding: 14px; border: 1px solid var(--ink); border-radius: 8px; background: #fff2ad; font-size: 13px; font-weight: 650; }
+.experience .settings-page .raw-explicit-consent input { margin-top: 1px; }
+.experience .settings-page .raw-authorization-line { flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.experience .settings-page .raw-authorization-line > span { min-width: min(100%, 240px); overflow-wrap: anywhere; }
+.experience .settings-page .raw-authorization-line small { font-size: 12px; line-height: 1.7; }
+.experience .settings-page .agent-action-line { border-bottom: 1px solid var(--line); }
+.experience .settings-page .agent-action-line b { font-size: 14px; }
+.experience .settings-page .agent-action-line small { color: var(--muted); font-size: 12px; }
+.experience .settings-page .agent-action-line em { border-width: 1px; border-radius: 5px; font-size: 11px; }
+.experience .settings-page .advanced-settings { max-width: none; margin-top: 30px; padding: 8px 0; border-top: 1px solid var(--line); color: var(--muted); }
+.experience .settings-page .advanced-settings > summary { color: var(--muted); font-size: 13px; font-weight: 600; }
+.experience .settings-page .advanced-settings .form-card { max-width: 650px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: white; box-shadow: none; }
+.experience .settings-page .chat-error { padding: 12px; border: 2px solid #a20040; border-radius: 9px; background: #fff0f6; color: #8b0037; font-size: 14px; }
+
+@media (max-width: 700px) {
+  .experience .settings-page { --settings-gap: 16px; }
+  .experience .settings-page .settings-intro { grid-template-columns: minmax(0, 1fr) 115px; min-height: 195px; margin-bottom: 24px; padding: 20px 18px; gap: 8px; }
+  .experience .settings-page .settings-intro h1 { margin-top: 14px; font-size: 25px; }
+  .experience .settings-page .settings-intro p { font-size: 13px; }
+  .experience .settings-page .settings-keeper::before { width: 105px; height: 105px; }
+  .experience .settings-page .settings-keeper img { width: 132px; height: 132px; }
+  .experience .settings-page .settings-keeper > span { padding: 2px 6px; font-size: 10px; }
+  .experience .settings-page .profile-grid { grid-template-columns: minmax(0, 1fr); }
+  .experience .settings-page .profile-grid > article { padding: 18px; }
+  .experience .settings-page h2 { font-size: 22px; }
+  .experience .settings-page .device-card { grid-template-columns: 105px minmax(0, 1fr); }
+  .experience .settings-page .device-card > .sticker { left: 18px; }
+  .experience .settings-page .device-visual { height: 105px; }
+  .experience .settings-page .device-card h2 { font-size: 20px; }
+  .experience .settings-page .settings-fold > summary h2 { font-size: 20px; }
+  .experience .settings-page .add-member-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .experience .settings-page .add-member-form label { grid-column: 1 / -1; }
+}
+
+@media (max-width: 350px) {
+  .experience .settings-page .settings-intro { grid-template-columns: minmax(0, 1fr) 85px; gap: 4px; padding: 18px 14px; }
+  .experience .settings-page .settings-intro h1 { font-size: 23px; }
+  .experience .settings-page .settings-keeper::before { width: 88px; height: 88px; }
+  .experience .settings-page .settings-keeper img { width: 102px; height: 116px; }
+  .experience .settings-page .settings-keeper > span { font-size: 9px; padding: 2px 4px; }
+  .experience .settings-page .device-card { grid-template-columns: 78px minmax(0, 1fr); gap: 14px 10px; }
+  .experience .settings-page .device-visual { height: 90px; }
+  .experience .settings-page .device-card h2 { font-size: 18px; }
+  .experience .settings-page .agent-soul-card .quiet-hours { grid-template-columns: 1fr; gap: 0; }
+}

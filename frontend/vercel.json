@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://poopsense-live-demo.vercel.app/api/$1" },
+    { "source": "/health", "destination": "https://poopsense-live-demo.vercel.app/health" },
+    { "source": "/ready", "destination": "https://poopsense-live-demo.vercel.app/ready" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

@@ -1,4 +1,7 @@
-param([switch]$TestModel)
+param(
+    [switch]$TestModel,
+    [switch]$LocalOnly
+)
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
@@ -41,17 +44,30 @@ function Assert-PortAvailable([int]$Port, [string]$HealthyUrl) {
 Assert-PortAvailable 8000 "http://127.0.0.1:8000/ready"
 Assert-PortAvailable 5173 "http://127.0.0.1:5173/"
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$listenHost = if ($LocalOnly) { "127.0.0.1" } else { "0.0.0.0" }
+
+if (-not $LocalOnly) {
+    foreach ($port in @(8000, 5173)) {
+        $loopbackListener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.LocalAddress -eq "127.0.0.1" }
+        if ($loopbackListener) {
+            $loopbackListener | Select-Object -ExpandProperty OwningProcess -Unique |
+                ForEach-Object { Stop-Process -Id $_ -Force }
+        }
+    }
+    Start-Sleep -Milliseconds 500
+}
 
 if (-not (Test-Url "http://127.0.0.1:8000/ready")) {
     $backendOut = Join-Path $logDir "backend-$stamp.out.log"
     $backendErr = Join-Path $logDir "backend-$stamp.err.log"
-    Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000") -WorkingDirectory $backendDir -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr -WindowStyle Hidden | Out-Null
+    Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", $listenHost, "--port", "8000") -WorkingDirectory $backendDir -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr -WindowStyle Hidden | Out-Null
 }
 
 if (-not (Test-Url "http://127.0.0.1:5173/")) {
     $frontendOut = Join-Path $logDir "frontend-$stamp.out.log"
     $frontendErr = Join-Path $logDir "frontend-$stamp.err.log"
-    Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1") -WorkingDirectory $frontendDir -RedirectStandardOutput $frontendOut -RedirectStandardError $frontendErr -WindowStyle Hidden | Out-Null
+    Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev", "--", "--host", $listenHost) -WorkingDirectory $frontendDir -RedirectStandardOutput $frontendOut -RedirectStandardError $frontendErr -WindowStyle Hidden | Out-Null
 }
 
 $deadline = (Get-Date).AddSeconds(30)
@@ -66,3 +82,11 @@ if (-not (Test-Url "http://127.0.0.1:5173/")) { throw "前端未在 30 秒内就
 & (Join-Path $root "check_demo.ps1") -TestModel:$TestModel
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "PoopSense 演示已就绪：http://127.0.0.1:5173/" -ForegroundColor Green
+if (-not $LocalOnly) {
+    $lanAddress = Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike "127.*" -and $_.InterfaceAlias -notlike "vEthernet*" } |
+        Select-Object -ExpandProperty IPAddress -First 1
+    if ($lanAddress) {
+        Write-Host "同一 Wi-Fi 下手机打开：http://${lanAddress}:5173/?demo=dry-flow-2" -ForegroundColor Cyan
+    }
+}

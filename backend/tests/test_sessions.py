@@ -23,6 +23,26 @@ def test_normal_upload_creates_auditable_facts_and_pending_claim(client, normal_
         assert db.scalar(select(func.count()).select_from(OutboxEvent)) == 1
 
 
+def test_upload_normalizes_offsets_before_storage(client, normal_payload):
+    normal_payload["timestamp"] = "2026-08-25T08:30:12+08:00"
+    normal_payload["end_timestamp"] = "2026-08-25T08:31:45+08:00"
+    assert client.post("/api/v1/device-sessions", json=normal_payload, headers=HEADERS).status_code == 202
+    with SessionLocal() as db:
+        record = db.scalar(select(SessionRecord))
+        assert record.occurred_at.hour == 0
+        assert record.end_timestamp.hour == 0
+
+
+def test_upload_rejects_missing_and_mixed_timezone_without_server_error(client, normal_payload):
+    normal_payload["timestamp"] = "2026-08-25T08:30:12"
+    normal_payload["end_timestamp"] = "2026-08-25T08:31:45+08:00"
+    assert client.post("/api/v1/device-sessions", json=normal_payload, headers=HEADERS).status_code == 422
+    normal_payload["end_timestamp"] = "2026-08-25T08:31:45"
+    assert client.post("/api/v1/device-sessions", json=normal_payload, headers=HEADERS).status_code == 422
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(SessionRecord)) == 0
+
+
 def test_duplicate_upload_is_idempotent(client, normal_payload):
     first = client.post("/api/v1/device-sessions", json=normal_payload, headers=HEADERS)
     second = client.post("/api/v1/device-sessions", json=normal_payload, headers=HEADERS)

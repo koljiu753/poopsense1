@@ -15,6 +15,7 @@ export type InboxItem = {
   assignment_version: number;
 };
 export type MemberSession = {
+  simulated?: boolean;
   session_id: string;
   occurred_at: string;
   assignment_version: number;
@@ -58,6 +59,30 @@ export type Trend = {
   frequency_per_week: number;
   consecutive_abnormal: number;
   dimensions: Record<string, TrendDimension>;
+  baseline_progress: {
+    status: "collecting" | "established";
+    current_valid_sessions: number;
+    required_valid_sessions: number;
+    remaining_sessions: number;
+    message: string;
+  };
+  weekly_series: {
+    week_start: string;
+    week_end: string;
+    assigned_sessions: number;
+    valid_sessions: number;
+    coverage: number;
+    normal_ratio: number | null;
+    dry_ratio: number | null;
+    loose_ratio: number | null;
+    dominant_shape: string | null;
+  }[];
+  latest_change: {
+    status: "insufficient" | "improved" | "stable" | "worsened" | "changed";
+    previous_shape: string | null;
+    current_shape: string | null;
+    message: string;
+  };
 };
 export type Device = {
   device_id: string;
@@ -83,9 +108,53 @@ export type Grant = {
 };
 export type AgentMessage = {
   message_id: number;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "event";
   content: string;
   created_at: string;
+  metadata?: {
+    report?: AgentAnalysisReport | null;
+    allowed_actions?: string[];
+    [key: string]: unknown;
+  };
+};
+export type AgentFinding = {
+  dimension: "shape" | "color" | "odor";
+  label: string;
+  value: string;
+  confidence: number;
+  source: string;
+};
+export type AgentRecommendation = {
+  category: "hydration" | "diet" | "movement" | "observation" | "care";
+  title: string;
+  guidance: string;
+  timing: "now" | "today" | "next_time";
+};
+export type AgentAnalysisReport = {
+  session_id: string;
+  generated_at: string;
+  status: "ready" | "insufficient" | "urgent";
+  reliable: boolean;
+  headline: string;
+  summary: string;
+  findings: AgentFinding[];
+  recommendations: AgentRecommendation[];
+  next_step: string;
+  followup_id?: string | null;
+};
+export type HealthActionFollowup = {
+  followup_id: string;
+  member_id: string;
+  source_session_id: string;
+  recommendation_categories: string[];
+  adoption_status: "suggested" | "accepted" | "completed" | "skipped";
+  perceived_outcome: "pending" | "improved" | "same" | "worse";
+  observed_outcome: "pending" | "improved" | "same" | "worse" | "changed" | "insufficient";
+  observed_from_session_id: string | null;
+  observed_outcome_note: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
 };
 export type HealthProfile = {
   member_id: string;
@@ -149,6 +218,7 @@ export type AgentChat = {
   skill: string;
   run_id: string;
   skill_version: string;
+  report?: AgentAnalysisReport | null;
 };
 export type RobotTask = {
   accepted?: boolean;
@@ -353,8 +423,18 @@ async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const controller = new AbortController();
+  const timeoutMs = path.includes("/agent/") && init?.method === "POST" ? 120000
+    : !init?.method || init.method === "GET" ? 20000 : 90000;
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const abort = () => controller.abort();
+  init?.signal?.addEventListener("abort", abort, { once: true });
+  if (init?.signal?.aborted) abort();
+  try {
   const response = await fetch(`${config.apiBase}${path}`, {
     ...init,
+    signal: controller.signal,
     headers: {
       "Content-Type": "application/json",
       "X-Household-Key": config.householdKey,
@@ -366,7 +446,14 @@ async function request<T>(
     const code = body?.detail?.code ?? `HTTP_${response.status}`;
     throw new ApiError(response.status, code);
   }
-  return response.json();
+  return await response.json();
+  } catch (error) {
+    if (timedOut) throw new ApiError(408, "REQUEST_TIMEOUT");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    init?.signal?.removeEventListener("abort", abort);
+  }
 }
 
 export const api = {
@@ -378,11 +465,30 @@ export const api = {
     }),
   inbox: (c: AppConfig) =>
     request<InboxItem[]>(c, `/api/v1/households/${c.householdId}/claim-inbox`),
-  trend: (c: AppConfig, memberId: string) =>
+  simulationStatus: (c: AppConfig) => request<{ enabled: boolean; reason?: string | null }>(c, `/api/v1/households/${c.householdId}/sensor-simulation`),
+  simulateSensor: (c: AppConfig, payload: { request_id: string; timestamp: string; scenario: string; member_id: string | null }) =>
+    request<{ session_id: string; duplicate: boolean; assignment_status: string }>(c,
+      `/api/v1/households/${c.householdId}/sensor-simulation`, { method: "POST", body: JSON.stringify(payload) }),
+  trend: (c: AppConfig, memberId: string, days = 30) =>
     request<Trend>(
       c,
-      `/api/v1/households/${c.householdId}/members/${memberId}/trends?days=30`,
+      `/api/v1/households/${c.householdId}/members/${memberId}/trends?days=${days}`,
     ),
+  actionFollowups: (c: AppConfig, memberId: string) =>
+    request<HealthActionFollowup[]>(
+      c,
+      `/api/v1/households/${c.householdId}/members/${memberId}/action-followups`,
+    ),
+  updateActionFollowup: (
+    c: AppConfig,
+    memberId: string,
+    followupId: string,
+    update: Partial<Pick<HealthActionFollowup, "adoption_status" | "perceived_outcome" | "note">>,
+  ) => request<HealthActionFollowup>(
+    c,
+    `/api/v1/households/${c.householdId}/members/${memberId}/action-followups/${followupId}`,
+    { method: "PUT", body: JSON.stringify(update) },
+  ),
   sessions: (c: AppConfig, memberId: string) =>
     request<MemberSession[]>(
       c,
@@ -466,6 +572,20 @@ export const api = {
       body: JSON.stringify({
         member_id: memberId,
         message,
+        conversation_id: conversationId ?? null,
+      }),
+    }),
+  analyzeSession: (
+    c: AppConfig,
+    memberId: string,
+    sessionId: string,
+    conversationId?: string,
+  ) =>
+    request<AgentChat>(c, `/api/v1/households/${c.householdId}/agent/session-analysis`, {
+      method: "POST",
+      body: JSON.stringify({
+        member_id: memberId,
+        session_id: sessionId,
         conversation_id: conversationId ?? null,
       }),
     }),

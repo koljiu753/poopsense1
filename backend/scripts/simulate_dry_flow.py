@@ -1,8 +1,8 @@
 """Inject one reliable dry-stool result for the local end-to-end demo.
 
 This script only simulates the sensor result and assigns it to a demo member.
-It never starts the physical robot. The arm still requires two explicit clicks
-in the Agent UI before the pickup-only trajectory can begin.
+It never starts physical hardware. The product now focuses on sensor records,
+lifestyle suggestions, user feedback and longitudinal observations.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def main() -> int:
 
     print(f"DRY_FLOW_READY session_id={session_id} member_id={args.member}")
     print("Keep the Home page open. Within 5 seconds it should show the cartoon, then Agent advice.")
-    print("The physical arm will not move until you click 准备取水 and 确认开始取水.")
+    print("No robotic execution is offered. Continue with advice feedback and the next observation.")
     return 0
 
 

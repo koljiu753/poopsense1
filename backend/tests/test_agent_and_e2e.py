@@ -3,7 +3,7 @@ from copy import deepcopy
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.models import AgentAction, AgentConversation, AgentFeedback, AgentMessage, AgentRun, AgentStep, FamilyGrant
+from app.models import AgentAction, AgentConversation, AgentFeedback, AgentMessage, AgentRun, AgentStep, FamilyGrant, SessionRecord
 from app.worker import run_until_empty
 
 
@@ -38,7 +38,9 @@ def test_comprehensive_review_calls_two_experts_and_persists_arbiter(client, mon
     body = response.json()
     assert body["skill"] == "comprehensive_review"
     assert len(calls) == 2
-    assert "健康医生复核" in body["message"]["content"]
+    assert "自动整理的健康参考" in body["message"]["content"]
+    assert "未经真人医生审核" in body["message"]["content"]
+    assert "健康医生复核" not in body["message"]["content"]
     run = client.get(
         f"/api/v1/households/hh_001/agent/runs/{body['run_id']}", headers=OWNER,
     ).json()
@@ -100,6 +102,234 @@ def test_agent_chat_persists_messages_authorization_and_audit(client, monkeypatc
         audit = db.scalar(select(AgentAction).where(AgentAction.action_type == "agent_chat_response"))
         assert audit.status == "succeeded"
         assert audit.input_summary["allowed_actions"] == ["read_authorized_trend", "explain"]
+
+
+def test_sensor_event_automatically_builds_report_and_multi_agent_plan(
+        client, normal_payload, monkeypatch):
+    import app.main as main_module
+    from app.agent import analyze_session
+
+    normal_payload["observations"]["shape"]["value"] = "hard"
+    normal_payload["observations"]["shape"]["confidence"] = 0.91
+    assert upload(client, normal_payload, "sensor_to_report").status_code == 202
+    assert client.post(
+        "/api/v1/households/hh_001/sessions/sensor_to_report/claim",
+        json={"member_id": "m_001"}, headers=OWNER,
+    ).status_code == 200
+
+    model_calls: list[str] = []
+
+    def fake_analysis(db, auth, member_id, session_id, conversation_id=None):
+        return analyze_session(
+            db, auth, member_id, session_id, conversation_id,
+            model_caller=lambda messages: model_calls.append(messages[0]["content"])
+            or ("健康医生已复核。" if len(model_calls) == 1 else "生活建议已整理。"),
+        )
+
+    monkeypatch.setattr(main_module, "agent_analyze_session", fake_analysis)
+    response = client.post(
+        "/api/v1/households/hh_001/agent/session-analysis",
+        json={"member_id": "m_001", "session_id": "sensor_to_report"},
+        headers=OWNER,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["report"]["status"] == "ready"
+    assert body["report"]["findings"][0]["value"] == "偏干硬"
+    assert {item["category"] for item in body["report"]["recommendations"]} == {
+        "hydration", "diet", "movement", "observation",
+    }
+    assert "offer_water_pickup" not in body["allowed_actions"]
+    assert "机械臂" not in body["report"]["next_step"]
+    assert "下一次可靠记录" in body["report"]["next_step"]
+    assert body["skill"] == "comprehensive_review"
+    assert len(model_calls) == 2
+
+    run = client.get(
+        f"/api/v1/households/hh_001/agent/runs/{body['run_id']}", headers=OWNER,
+    ).json()
+    assert run["trigger"] == "sensor_event"
+    assert [step["agent_name"] for step in run["steps"]] == [
+        "main_agent", "health_doctor", "life_coach", "safety_arbiter",
+    ]
+    history = client.get(
+        f"/api/v1/households/hh_001/agent/conversations/{body['conversation_id']}",
+        headers=OWNER,
+    ).json()
+    assert [message["role"] for message in history["messages"]] == ["event", "assistant"]
+    assert history["messages"][-1]["metadata"]["report"]["session_id"] == "sensor_to_report"
+
+    repeated = client.post(
+        "/api/v1/households/hh_001/agent/session-analysis",
+        json={"member_id": "m_001", "session_id": "sensor_to_report"},
+        headers=OWNER,
+    ).json()
+    assert repeated["message"]["message_id"] == body["message"]["message_id"]
+    assert len(model_calls) == 2
+    with SessionLocal() as db:
+        record = db.scalar(select(SessionRecord).where(
+            SessionRecord.external_session_id == "sensor_to_report",
+        ))
+        audit = db.scalar(select(AgentAction).where(
+            AgentAction.action_type == "agent_session_analysis",
+        ))
+        assert audit.session_id == record.id
+        assert audit.input_summary["trigger"] == "sensor_event"
+
+
+def test_unreliable_sensor_event_stops_targeted_advice_even_without_model(
+        client, normal_payload):
+    normal_payload["observations"]["odor"]["confidence"] = 0.2
+    assert upload(client, normal_payload, "sensor_uncertain").status_code == 202
+    assert client.post(
+        "/api/v1/households/hh_001/sessions/sensor_uncertain/claim",
+        json={"member_id": "m_001"}, headers=OWNER,
+    ).status_code == 200
+    response = client.post(
+        "/api/v1/households/hh_001/agent/session-analysis",
+        json={"member_id": "m_001", "session_id": "sensor_uncertain"},
+        headers=OWNER,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["report"]["status"] == "insufficient"
+    assert body["report"]["summary"].startswith("本次无法可靠判断")
+    assert [item["category"] for item in body["report"]["recommendations"]] == [
+        "observation",
+    ]
+    assert "offer_water_pickup" not in body["allowed_actions"]
+    assert body["model_version"] == "policy-engine"
+
+
+def test_report_reuse_is_scoped_to_current_member_assignment(client, normal_payload):
+    assert upload(client, normal_payload, "reusable").status_code == 202
+    claim_url = "/api/v1/households/hh_001/sessions/reusable/claim"
+    analysis_url = "/api/v1/households/hh_001/agent/session-analysis"
+    assert client.post(claim_url, json={"member_id": "m_001"}, headers=OWNER).status_code == 200
+    def analyze(member):
+        response = client.post(analysis_url, json={"member_id": member, "session_id": "reusable"}, headers=OWNER)
+        assert response.status_code == 200
+        return response.json()
+    first = analyze("m_001")
+    repeated = analyze("m_001")
+    assert repeated["message"]["message_id"] == first["message"]["message_id"]
+    assert repeated["run_id"] == first["run_id"]
+    assert client.post(claim_url, json={"member_id": "m_002", "claim_method": "correction"}, headers=OWNER).status_code == 200
+    corrected = analyze("m_002")
+    assert corrected["conversation_id"] != first["conversation_id"]
+    assert corrected["message"]["message_id"] != first["message"]["message_id"]
+    assert analyze("m_002")["run_id"] == corrected["run_id"]
+    denied = client.post(analysis_url, json={"member_id": "m_001", "session_id": "reusable"}, headers=OWNER)
+    assert denied.status_code == 403
+    with SessionLocal() as db:
+        conversation = db.get(AgentConversation, corrected["conversation_id"])
+        assert conversation.subject_member_id == "m_002"
+    assert client.post(claim_url, json={"member_id": "m_001", "claim_method": "correction"}, headers=OWNER).status_code == 200
+    returned = analyze("m_001")
+    assert returned["run_id"] not in {first["run_id"], corrected["run_id"]}
+    assert analyze("m_001")["run_id"] == returned["run_id"]
+
+
+def test_recommendation_is_saved_and_next_reliable_record_closes_the_loop(
+        client, normal_payload):
+    first = deepcopy(normal_payload)
+    first["sequence_number"] = 51
+    first["timestamp"] = "2026-08-28T08:30:12+08:00"
+    first["end_timestamp"] = "2026-08-28T08:31:45+08:00"
+    first["observations"]["shape"]["value"] = "hard"
+    assert upload(client, first, "followup_dry").status_code == 202
+    assert client.post(
+        "/api/v1/households/hh_001/sessions/followup_dry/claim",
+        json={"member_id": "m_001"}, headers=OWNER,
+    ).status_code == 200
+    report = client.post(
+        "/api/v1/households/hh_001/agent/session-analysis",
+        json={"member_id": "m_001", "session_id": "followup_dry"}, headers=OWNER,
+    ).json()
+    followup_id = report["report"]["followup_id"]
+    assert followup_id.startswith("followup_")
+
+    base_url = "/api/v1/households/hh_001/members/m_001/action-followups"
+    saved = client.get(base_url, headers=OWNER).json()
+    assert saved[0]["adoption_status"] == "suggested"
+    accepted = client.put(
+        f"{base_url}/{followup_id}", json={"adoption_status": "accepted"}, headers=OWNER,
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["adoption_status"] == "accepted"
+
+    second = deepcopy(normal_payload)
+    second["sequence_number"] = 52
+    second["timestamp"] = "2026-08-30T08:30:12+08:00"
+    second["end_timestamp"] = "2026-08-30T08:31:45+08:00"
+    assert upload(client, second, "followup_normal").status_code == 202
+    assert client.post(
+        "/api/v1/households/hh_001/sessions/followup_normal/claim",
+        json={"member_id": "m_001"}, headers=OWNER,
+    ).status_code == 200
+    # No second chat/report call: receiving and assigning the record is sufficient.
+
+    closed = next(item for item in client.get(base_url, headers=OWNER).json()
+                  if item["followup_id"] == followup_id)
+    assert closed["observed_outcome"] == "improved"
+    assert closed["observed_from_session_id"] == "followup_normal"
+    assert "不证明" in closed["observed_outcome_note"]
+
+    # Correcting the comparison record must remove it from Alex's followup.
+    assert client.post(
+        "/api/v1/households/hh_001/sessions/followup_normal/claim",
+        json={"member_id": "m_002", "claim_method": "correction"}, headers=OWNER,
+    ).status_code == 200
+    corrected = client.get(base_url, headers=OWNER).json()[0]
+    assert corrected["observed_outcome"] == "pending"
+    assert corrected["observed_from_session_id"] is None
+
+    # Correcting the source hides the old member's plan without transferring feedback.
+    assert client.post(
+        "/api/v1/households/hh_001/sessions/followup_dry/claim",
+        json={"member_id": "m_002", "claim_method": "correction"}, headers=OWNER,
+    ).status_code == 200
+    assert client.get(base_url, headers=OWNER).json() == []
+    assert client.put(f"{base_url}/{followup_id}", json={"adoption_status": "completed"},
+                      headers=OWNER).status_code == 404
+    assert client.get(base_url.replace("m_001", "m_002"), headers=OWNER).json() == []
+
+
+def test_followup_uses_first_reliable_event_not_arrival_or_chat_order(client, normal_payload):
+    def add_record(name, day, sequence, *, shape="normal", color="brown", uncertain=False):
+        payload = deepcopy(normal_payload)
+        payload["sequence_number"] = sequence
+        payload["timestamp"] = f"2026-08-{day:02d}T08:30:12+08:00"
+        payload["end_timestamp"] = f"2026-08-{day:02d}T08:31:45+08:00"
+        payload["observations"]["shape"]["value"] = shape
+        if uncertain:
+            payload["observations"]["shape"]["confidence"] = 0.1
+        assert upload(client, payload, name, color=color).status_code == 202
+        assert client.post(f"/api/v1/households/hh_001/sessions/{name}/claim",
+                           json={"member_id": "m_001"}, headers=OWNER).status_code == 200
+
+    add_record("source_dry", 20, 101, shape="hard")
+    report = client.post("/api/v1/households/hh_001/agent/session-analysis",
+                         json={"member_id": "m_001", "session_id": "source_dry"},
+                         headers=OWNER)
+    assert report.status_code == 200
+    url = "/api/v1/households/hh_001/members/m_001/action-followups"
+    add_record("later_normal", 25, 102)
+    assert client.get(url, headers=OWNER).json()[0]["observed_outcome"] == "improved"
+    # An earlier uncertain record is not evidence of change.
+    add_record("uncertain_early", 21, 103, uncertain=True)
+    assert client.get(url, headers=OWNER).json()[0]["observed_from_session_id"] == "later_normal"
+    # A late upload must replace the later comparison by event time.
+    add_record("late_hard", 23, 104, shape="hard")
+    result = client.get(url, headers=OWNER).json()[0]
+    assert result["observed_outcome"] == "same"
+    assert result["observed_from_session_id"] == "late_hard"
+    # A normal shape with a redline color must never be reported as improvement.
+    add_record("redline_early", 22, 105, color="red")
+    result = client.get(url, headers=OWNER).json()[0]
+    assert result["observed_outcome"] == "insufficient"
+    assert result["observed_from_session_id"] == "redline_early"
+    assert "不将它作为改善结论" in result["observed_outcome_note"]
 
 
 def test_agent_feedback_is_upserted_and_used_as_next_turn_preference(client, monkeypatch):

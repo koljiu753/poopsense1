@@ -1,0 +1,53 @@
+{
+  "source": "https://raw.githubusercontent.com/koljiu753/poopsense1/9026ab879c6fffdd9e0e71392102b989ebe6244b/frontend/public",
+  "files": [
+    {
+      "name": "poop-island-agent-v1.png",
+      "sha256": "5157a6384bf339422b206a79afef59a2ad304025f0839403be962ead10617c3d"
+    },
+    {
+      "name": "poop-island-map-v1.png",
+      "sha256": "74ca1c2d85bdf27bd9079aab448763b3fd799a4fd80ad971c63eec7c59a99d7f"
+    },
+    {
+      "name": "poop-shape-compact-v1.png",
+      "sha256": "d3af1fd601d6ed73fcc7fa31df74fe6340e9c6e2e31c5cd55b64e588b0f932a0"
+    },
+    {
+      "name": "poop-shape-compact-yellow-v2.png",
+      "sha256": "0a943a690c41660a3f0670ee7e2d3275e7b3cc2bb5f5cc9c0826670eb32d1fc8"
+    },
+    {
+      "name": "poop-shape-elongated-v1.png",
+      "sha256": "ba314c756eb85fa2dd6fcfec33cdbcbda9f748160d8d4b80ba87552c6524dc8e"
+    },
+    {
+      "name": "poop-shape-elongated-yellow-v2.png",
+      "sha256": "06bb41f60b4e169c2a42f99c35471ddb9a23f39a04192b039e099b1ae77ab6eb"
+    },
+    {
+      "name": "poop-shape-irregular-v1.png",
+      "sha256": "6724050eace27a2983f19ff63da1e6dd19b358f8889a842090cf92470255eda8"
+    },
+    {
+      "name": "poop-shape-irregular-yellow-v2.png",
+      "sha256": "bbc35479a2f5fb5132d70d6faa6fbbf2e3816c2e7af13aced6b40215145d79bc"
+    },
+    {
+      "name": "poop-shape-scattered-v1.png",
+      "sha256": "77fe9d9be77e388aa9f94c9aaf5e04120ab2eb44a2107f96914bca7d70c15f96"
+    },
+    {
+      "name": "poop-shape-scattered-yellow-v2.png",
+      "sha256": "488d718ced54ce3f7c3eae03008a31298f13f3a56b753bfda1d9322e1eeea184"
+    },
+    {
+      "name": "poopsense-device-pop-v2.png",
+      "sha256": "695a7389a559363a1dffcd09be3a6e0debdcceed6d63b83da01f0d446bc59e96"
+    },
+    {
+      "name": "poopsense-mascot-pop-v1.png",
+      "sha256": "888d9151bcf54bee3579731ada54b77b58865cebea79c2288cc4a30170636a9f"
+    }
+  ]
+}

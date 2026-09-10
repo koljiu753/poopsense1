@@ -15,12 +15,13 @@ def start_chat_run(db: Session, *, household_id: str, member_id: str,
                    authorization_basis: str, delegated_agent: str,
                    skill: str, skill_version: str,
                    context_domains: tuple[str, ...],
-                   policy_version: str) -> tuple[AgentRun, AgentStep]:
+                   policy_version: str,
+                   trigger: str = "user_message") -> tuple[AgentRun, AgentStep]:
     now = datetime.now(timezone.utc)
     run = AgentRun(
         id=f"run_{uuid.uuid4().hex}", household_id=household_id,
         subject_member_id=member_id, conversation_id=conversation_id,
-        trigger="user_message", goal=goal, status="running", current_step=1,
+        trigger=trigger, goal=goal, status="running", current_step=1,
         max_steps=MAX_AGENT_STEPS, created_by_user_id=user_id,
         policy_version=policy_version, authorization_basis=authorization_basis,
         result={}, error=None, created_at=now, updated_at=now, completed_at=None,

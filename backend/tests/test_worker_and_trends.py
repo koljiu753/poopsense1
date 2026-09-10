@@ -165,3 +165,11 @@ def test_personal_baseline_requires_history_then_detects_categorical_deviation(c
     assert shape["baseline_sample_count"] == 4
     assert shape["baseline_deviation_rate"] == 1.0
     assert shape["baseline_status"] == "deviated"
+    assert trend["baseline_progress"] == {
+        "status": "established", "current_valid_sessions": 5,
+        "required_valid_sessions": 5, "remaining_sessions": 0,
+        "message": "已经有足够的可靠记录，可以开始和你自己的日常节奏比较。",
+    }
+    assert sum(week["valid_sessions"] for week in trend["weekly_series"]) == 5
+    assert trend["latest_change"]["status"] == "worsened"
+    assert "不证明" in trend["latest_change"]["message"]

@@ -1,0 +1,10 @@
+.env*
+!.env.production.example
+.pytest_cache/
+.tools/
+.venv*/
+backups/
+tests/
+*.db
+*.pyc
+__pycache__/

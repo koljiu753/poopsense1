@@ -1,0 +1,72 @@
+.new-record-notice {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  margin: 0 0 22px;
+  padding: 14px 16px;
+  border: 2px solid #0b0b0b;
+  border-radius: 14px;
+  background: #fff8e9;
+  color: #0b0b0b;
+  box-shadow: 3px 3px 0 #0b0b0b;
+  font: 15px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.new-record-notice .new-record-notice-character {
+  display: block;
+  width: 56px;
+  height: 56px;
+  padding: 3px;
+  border: 2px solid #0b0b0b;
+  border-radius: 12px;
+  background: #ff087f;
+  object-fit: contain;
+}
+.new-record-notice .new-record-notice-copy { min-width: 0; overflow-wrap: anywhere; }
+.new-record-notice .new-record-notice-copy strong { display: block; font-size: 15px; font-weight: 850; line-height: 1.5; }
+.new-record-notice .new-record-notice-copy p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 4px 0 0;
+  color: #57514a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.new-record-notice .new-record-notice-source,
+.new-record-notice .new-record-notice-priority {
+  padding: 1px 6px;
+  border: 1px solid #0b0b0b;
+  border-radius: 4px;
+  background: #ffdc18;
+  color: #0b0b0b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.new-record-notice .new-record-notice-priority { background: #ff087f; font-weight: 800; }
+.new-record-notice .new-record-notice-copy .new-record-notice-safety { color: #0b0b0b; font-size: 13px; }
+.new-record-notice .new-record-notice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.new-record-notice .new-record-notice-actions button {
+  min-width: 56px;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 2px solid #0b0b0b;
+  border-radius: 9px;
+  background: #fff8e9;
+  color: #0b0b0b;
+  box-shadow: none;
+  font: 800 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.new-record-notice .new-record-notice-actions .new-record-notice-open { background: #0964e8; color: white; }
+.new-record-notice .new-record-notice-actions .new-record-notice-dismiss { border-color: transparent; font-weight: 600; }
+.new-record-notice button:focus-visible { outline: 3px solid #0964e8; outline-offset: 3px; }
+
+@media (max-width: 600px) {
+  .new-record-notice { grid-template-columns: 48px minmax(0, 1fr); gap: 10px 12px; padding: 12px; margin-bottom: 18px; }
+  .new-record-notice .new-record-notice-character { width: 48px; height: 48px; }
+  .new-record-notice .new-record-notice-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}

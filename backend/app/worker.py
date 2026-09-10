@@ -1,6 +1,7 @@
 import argparse
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+import time
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
@@ -138,11 +139,39 @@ def run_until_empty(db: Session, handler: EventHandler | None = None, limit: int
     return processed
 
 
+def run_forever(limit: int = 100, poll_seconds: float = 1.0) -> None:
+    """Continuously drain bounded batches using a fresh session per cycle."""
+    poll_seconds = max(0.1, poll_seconds)
+    while True:
+        try:
+            with SessionLocal() as session:
+                processed = run_until_empty(session, limit=limit)
+            if processed:
+                print(f"processed={processed}", flush=True)
+            else:
+                time.sleep(poll_seconds)
+        except KeyboardInterrupt:
+            print("worker_stopped=true", flush=True)
+            return
+        except Exception as exc:
+            # Event retry/dead-letter state remains in the database. Keep the
+            # process alive so a transient database/network outage can recover.
+            print(f"worker_cycle_error={type(exc).__name__}", flush=True)
+            time.sleep(poll_seconds)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--replay-id", type=int)
+    parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--poll-seconds", type=float, default=1.0)
     args = parser.parse_args()
+    if args.watch:
+        if args.replay_id is not None:
+            parser.error("--replay-id cannot be combined with --watch")
+        run_forever(limit=args.limit, poll_seconds=args.poll_seconds)
+        raise SystemExit(0)
     with SessionLocal() as session:
         if args.replay_id is not None:
             replayed = replay_dead_letter(session, args.replay_id)

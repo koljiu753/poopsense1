@@ -394,7 +394,10 @@ class RobotTaskService:
                 self.runtime.history.append(
                     {"step": "completed", "status": "completed", "message": "递水任务已完成", "at": self.runtime.completed_at}
                 )
-            self._notify()
+                # Keep the terminal runtime state hidden from readers until its
+                # audit snapshot has been persisted. The lock is re-entrant, so
+                # `_notify()` can safely obtain a snapshot here.
+                self._notify()
         except RobotTaskError as exc:
             with self._state_lock:
                 stopped = exc.code == "TASK_STOPPED"
@@ -412,7 +415,7 @@ class RobotTaskService:
                         "at": self.runtime.completed_at,
                     }
                 )
-            self._notify()
+                self._notify()
         except Exception:
             with self._state_lock:
                 self.runtime.status = "failed"
@@ -420,7 +423,7 @@ class RobotTaskService:
                 self.runtime.message = "递水任务发生未预期错误"
                 self.runtime.requires_user_action = None
                 self.runtime.completed_at = self._now()
-            self._notify()
+                self._notify()
 
     def _execute_pickup(self, task_id: str, plan: dict[str, Any]) -> None:
         """Run only the stationary arm pickup sequence used by the short demo.
@@ -458,7 +461,7 @@ class RobotTaskService:
                     "message": self.runtime.message,
                     "at": self.runtime.completed_at,
                 })
-            self._notify()
+                self._notify()
         except RobotTaskError as exc:
             with self._state_lock:
                 stopped = exc.code == "TASK_STOPPED"
@@ -474,7 +477,7 @@ class RobotTaskService:
                     "error": self.runtime.error,
                     "at": self.runtime.completed_at,
                 })
-            self._notify()
+                self._notify()
         except Exception:
             with self._state_lock:
                 self.runtime.status = "failed"
@@ -482,7 +485,7 @@ class RobotTaskService:
                 self.runtime.message = "取水演示发生未预期错误"
                 self.runtime.requires_user_action = None
                 self.runtime.completed_at = self._now()
-            self._notify()
+                self._notify()
 
     def _validate_pickup_start(self) -> dict[str, Any]:
         plan = self.load_plan()

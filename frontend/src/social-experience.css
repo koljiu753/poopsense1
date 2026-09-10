@@ -1,0 +1,407 @@
+/* The square continues the character world; conversation remains an explicit action. */
+.experience .social-page .compose-dialog .community-compose { padding: 0; margin: 0; border: 0; box-shadow: none; background: transparent; }
+.experience .social-page .compose-dialog .community-compose textarea { min-height: 130px; }
+.experience .social-page .island-pet-settings, .experience .social-page .island-relations-toggle { scroll-margin-top: 86px; }
+.experience .social-page {
+  min-width: 0;
+  color: var(--ink);
+}
+
+.experience .social-page .island-header {
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.experience .social-page .island-header h1 {
+  margin: 4px 0 0;
+  font: 950 36px/1.2 "Microsoft YaHei", sans-serif;
+  letter-spacing: -1px;
+}
+
+.experience .social-page .island-header .island-kicker {
+  margin: 0;
+  color: var(--pink);
+  font: 900 12px/1.2 "Arial Black", sans-serif;
+  letter-spacing: 2px;
+}
+
+.experience .social-page .island-header p:not(.island-kicker) {
+  max-width: 39em;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.experience .social-page .island-header-actions {
+  flex: none;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.experience .social-page .island-weather {
+  align-self: flex-start;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.experience .social-page .island-header-actions button {
+  min-height: 46px;
+  padding: 9px 14px;
+  background: var(--yellow);
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 var(--ink);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.experience .social-page .island-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+
+.experience .social-page .island-map-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 3px solid var(--ink);
+  border-radius: 22px;
+  background: var(--blue);
+  box-shadow: 7px 7px 0 var(--ink);
+  isolation: isolate;
+}
+
+.experience .social-page .island-map-toolbar {
+  order: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 0;
+  padding: 12px 16px;
+  background: var(--yellow);
+  font-size: 12px;
+}
+
+.experience .social-page .island-map-toolbar button {
+  padding: 4px 10px;
+  background: var(--cream);
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.experience .social-page :is(.island-map-toolbar, .island-focus-card, .relation-agent) i {
+  background: var(--pink);
+  border: 1px solid var(--ink);
+}
+
+.experience .social-page .island-focus-card {
+  position: relative;
+  inset: auto;
+  order: 1;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, .8fr) minmax(0, 1fr);
+  gap: 12px 8px;
+  align-items: center;
+  margin: 0;
+  padding: 20px 18px;
+  border: 0;
+  border-top: 3px solid var(--ink);
+  border-bottom: 3px solid var(--ink);
+  border-radius: 0;
+  background-color: var(--blue);
+  background-image: radial-gradient(#0004 1px, transparent 1px);
+  background-size: 7px 7px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.experience .social-page .island-focus-card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 5%;
+  width: 37%;
+  height: 38px;
+  bottom: 88px;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: var(--pink);
+  box-shadow: inset 0 0 0 7px var(--cream), 0 6px 0 var(--ink);
+}
+
+.experience .social-page .island-focus-card > img {
+  align-self: end;
+  width: 118%;
+  height: 200px;
+  max-width: none;
+  margin: 0 -9%;
+  object-fit: contain;
+  filter: drop-shadow(3px 5px 0 #0004);
+}
+
+.experience .social-page .island-focus-card > div {
+  position: relative;
+  align-self: center;
+  min-width: 0;
+  padding: 14px;
+  border: 2px solid var(--ink);
+  border-radius: 16px 16px 16px 0;
+  background: var(--cream);
+  box-shadow: 4px 4px 0 var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.experience .social-page .island-focus-card > div::before {
+  content: "";
+  position: absolute;
+  bottom: 18px;
+  left: -10px;
+  width: 16px;
+  height: 16px;
+  border-left: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  background: var(--cream);
+  transform: rotate(45deg);
+}
+
+.experience .social-page .island-focus-card > div > small {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.experience .social-page .island-focus-card h2 {
+  margin: 5px 0 8px;
+  font: 950 23px/1.3 "Microsoft YaHei", sans-serif;
+}
+
+.experience .social-page .island-focus-card p {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.experience .social-page .island-focus-card span {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.experience .social-page .island-focus-card em {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.experience .social-page .island-focus-card > button {
+  grid-column: 1 / -1;
+  min-height: 46px;
+  margin: 2px 0 0;
+  padding: 8px 16px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--yellow);
+  color: var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.experience .social-page .island-focus-card > button:disabled {
+  cursor: default;
+  background: var(--cream);
+  color: var(--ink);
+  opacity: .85;
+}
+
+.experience .social-page .island-canvas {
+  order: 2;
+  aspect-ratio: 1586 / 992;
+  min-height: 0;
+  border: 0;
+  background: var(--blue);
+}
+
+.experience .social-page .island-map-image { object-fit: contain; }
+.experience .social-page .island-map-world { min-width: 0; }
+.experience .social-page .island-agent { min-height: 44px; width: 60px; }
+.experience .social-page .island-place { min-height: 44px; }
+.experience .social-page .island-place span { padding: 4px 6px; font-size: 10px; border-width: 2px; background: var(--cream); }
+.experience .social-page .island-agent small { max-width: 104px; background: var(--cream); font-size: 9px; }
+.experience .social-page .island-agent.is-mine .agent-speech { background: var(--pink); color: var(--ink); }
+.experience .social-page .island-zoom { left: 12px; bottom: 12px; border-width: 2px; }
+.experience .social-page .island-zoom button { width: 44px; height: 44px; background: var(--cream); }
+
+.experience .social-page .island-relations {
+  display: block;
+  min-width: 0;
+  padding: 0 0 0 18px;
+  border: 0;
+  border-left: 2px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.experience .social-page .island-relations > header { flex-wrap: wrap; gap: 4px; border-bottom: 2px solid var(--ink); }
+.experience .social-page .island-relations > header h2 { font-size: 20px; }
+.experience .social-page .island-relations section { padding: 14px 0; border: 0; border-bottom: 1px solid var(--line); }
+.experience .social-page .island-relations h3 { font-size: 13px; }
+.experience .social-page .relation-agent { grid-template-columns: 38px minmax(0, 1fr); border: 0; border-radius: 0; background: transparent; padding: 6px 0; font-size: 13px; }
+.experience .social-page .relation-agent img { width: 38px; height: 44px; }
+.experience .social-page .relation-agent.is-owner { background: transparent; }
+.experience .social-page .relation-agent:is(:hover, :focus-visible) { background: #ffe6f0; }
+.experience .social-page .relation-agent small { font-size: 11px; }
+.experience .social-page .island-encounters { gap: 8px; }
+.experience .social-page .island-encounters button { padding: 8px; border: 2px solid var(--ink); background: var(--yellow); }
+.experience .social-page .island-encounters span { font-size: 10px; }
+.experience .social-page .island-privacy { margin-top: 12px; font-size: 12px; line-height: 1.6; }
+
+.experience .social-page .island-relations-toggle {
+  min-width: 0;
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  background: var(--cream);
+}
+.experience .social-page .island-relations-toggle > summary { display: flex; align-items: center; gap: 10px; padding: 12px 14px; font-weight: 850; }
+.experience .social-page .island-relations-toggle > summary span { margin-left: auto; font-size: 12px; font-weight: 500; }
+.experience .social-page .island-relations-toggle .island-relations { border: 0; border-top: 2px solid var(--ink); padding: 14px; }
+
+.experience .social-page .social-progressive {
+  margin-top: 24px;
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  background: var(--cream);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.experience .social-page .social-progressive > summary { align-items: center; gap: 10px; padding: 15px 18px; }
+.experience .social-page .social-progressive > summary b { font-size: 17px; }
+.experience .social-page .social-progressive > summary span { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }
+.experience .social-page .social-progressive > summary::after { width: 26px; height: 26px; }
+.experience .social-page .community-noticeboard > summary { background: var(--pink); color: var(--ink); }
+.experience .social-page .community-noticeboard > summary span { color: var(--ink); }
+.experience .social-page .community-feed { margin: 0; padding: 18px; border: 0; border-top: 2px solid var(--ink); background: var(--cream); box-shadow: none; }
+.experience .social-page .community-feed > p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.experience .social-page .community-feed > article { position: relative; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; padding: 18px 0; gap: 10px; border: 0; border-bottom: 1px solid var(--line); }
+.experience .social-page .community-feed > article:first-child { padding-top: 0; }
+.experience .social-page .community-feed > article:last-child { padding-bottom: 0; border: 0; }
+.experience .social-page .community-feed > article > b { font-size: 14px; overflow-wrap: anywhere; }
+.experience .social-page .community-feed > article > small { align-self: start; padding: 2px 8px; border: 1px solid var(--ink); border-radius: 20px; background: var(--yellow); font-size: 11px; }
+.experience .social-page .community-feed > article p { padding: 14px 16px; border: 2px solid var(--ink); border-radius: 0 16px 16px; background: white; font-size: 15px; line-height: 1.8; overflow-wrap: anywhere; }
+.experience .social-page .community-feed > article button { color: var(--blue); padding: 8px 0; font-size: 13px; }
+.experience .social-page .community-feed > article > div { display: flex; gap: 18px; }
+
+.experience .social-page .community-compose {
+  grid-template-columns: 150px minmax(0, 1fr);
+  min-width: 0;
+  margin-top: 24px;
+  padding: 20px;
+  border: 3px solid var(--ink);
+  border-radius: 18px;
+  background: var(--yellow);
+  box-shadow: 5px 5px 0 var(--ink);
+}
+.experience .social-page .community-compose h2 { margin: 0 0 4px; font-size: 22px; }
+.experience .social-page .community-compose :is(select, textarea) { min-width: 0; max-width: 100%; border: 2px solid var(--ink); border-radius: 10px; background: var(--cream); font-size: 16px; font-weight: 500; }
+.experience .social-page .community-compose textarea { min-height: 110px; }
+.experience .social-page .community-compose label { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; font-weight: 600; line-height: 1.7; }
+.experience .social-page .community-compose input[type="checkbox"] { flex: none; width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--blue); }
+.experience .social-page .community-compose button { grid-column: 1 / -1; min-height: 46px; border: 2px solid var(--ink); border-radius: 12px; background: var(--pink); color: var(--ink); box-shadow: 3px 3px 0 var(--ink); font-weight: 850; }
+.experience .social-page .community-compose button:disabled { cursor: not-allowed; }
+.experience .social-page .island-pet-editor { grid-template-columns: 110px minmax(0, 1fr); gap: 16px; border-top: 2px solid var(--ink); }
+.experience .social-page .island-pet-editor > img { grid-row: span 2; width: 110px; height: 140px; }
+.experience .social-page .island-pet-editor label { min-width: 0; font-size: 14px; }
+.experience .social-page .island-pet-editor input { min-width: 0; min-height: 44px; border-radius: 10px; background: white; font-size: 16px; }
+.experience .social-page .island-pet-editor .pet-skins { grid-area: auto; grid-column: 2; gap: 8px; }
+.experience .social-page .pet-skins button { border: 2px solid var(--ink); border-radius: 8px; background: var(--cream); font-size: 11px; }
+.experience .social-page .pet-skins button[aria-pressed="true"] { background: var(--yellow); }
+.experience .social-page .pet-skins button:disabled { cursor: not-allowed; }
+.experience .social-page .island-pet-editor > button { grid-column: 1 / -1; border-radius: 10px; }
+.experience .social-page .social-toast { align-items: flex-start; border: 2px solid var(--ink); border-radius: 12px; background: var(--yellow); box-shadow: 4px 4px 0 var(--ink); font-size: 14px; line-height: 1.7; }
+.experience .social-page .social-toast button { flex: none; align-self: center; min-width: 44px; }
+
+@media (min-width: 1101px) {
+  .experience .social-page .island-map-shell { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .experience .social-page .island-map-toolbar { grid-column: 1 / -1; }
+  .experience .social-page .island-focus-card { border-bottom: 0; border-right: 3px solid var(--ink); }
+  .experience .social-page .island-canvas { min-height: 100%; aspect-ratio: auto; border-top: 3px solid var(--ink); }
+  .experience .social-page .island-relations-toggle .island-relations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+  .experience .social-page .island-relations-toggle .island-relations > header, .experience .social-page .island-relations-toggle .island-privacy { grid-column: 1 / -1; }
+}
+
+@media (max-width: 1100px) {
+  .experience .social-page .island-layout { grid-template-columns: minmax(0, 1fr); }
+  .experience .social-page .island-focus-card { grid-template-columns: minmax(0, .85fr) minmax(0, 1fr); padding: 20px 24px; }
+  .experience .social-page .island-focus-card > img { height: 240px; }
+  .experience .social-page .island-relations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 18px 0 0; border-left: 0; border-top: 2px solid var(--ink); }
+  .experience .social-page .island-relations > header, .experience .social-page .island-privacy { grid-column: 1 / -1; }
+  .experience .social-page .island-relations section { padding: 0; border: 0; }
+}
+
+@media (max-width: 600px) {
+  .experience .social-page .island-header { gap: 12px; align-items: stretch; margin-bottom: 16px; }
+  .experience .social-page .island-header h1 { font-size: 29px; }
+  .experience .social-page .island-header p:not(.island-kicker) { font-size: 12px; margin-top: 6px; }
+  .experience .social-page .island-header-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 12px; }
+  .experience .social-page .island-weather { align-self: center; max-width: none; font-size: 11px; line-height: 1.6; }
+  .experience .social-page .island-header-actions button { width: 100%; max-width: none; font-size: 13px; }
+  .experience .social-page .island-map-toolbar { flex-direction: row; align-items: center; gap: 6px; padding: 8px 12px; font-size: 11px; }
+  .experience .social-page .island-map-toolbar button { font-size: 11px; }
+  .experience .social-page .island-focus-card { grid-template-columns: minmax(0, .8fr) minmax(0, 1fr); gap: 14px 7px; padding: 16px 12px; }
+  .experience .social-page .island-focus-card > img { width: 125%; height: 170px; margin-inline: -12.5%; }
+  .experience .social-page .island-focus-card > div { padding: 11px; }
+  .experience .social-page .island-focus-card h2 { font-size: 19px; margin-bottom: 7px; }
+  .experience .social-page .island-focus-card p { font-size: 11px; }
+  .experience .social-page .island-focus-card span { font-size: 11px; margin-top: 7px; }
+  .experience .social-page .island-focus-card em { font-size: 10px; }
+  .experience .social-page .island-focus-card > button { min-height: 46px; margin-top: 0; }
+  .experience .social-page .island-focus-card::before { bottom: 78px; height: 30px; }
+  .experience .social-page .island-canvas { aspect-ratio: 1586 / 992; }
+  .experience .social-page .island-agent { width: 48px; }
+  .experience .social-page .island-agent small { max-width: 90px; font-size: 8px; }
+  .experience .social-page .island-place span { font-size: 9px; padding: 4px; }
+  .experience .social-page .agent-speech { font-size: 9px; right: -9px; }
+  .experience .social-page .island-relations { display: block; }
+  .experience .social-page .island-relations section { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .experience .social-page .island-encounters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .experience .social-page .island-encounters button { display: flex; gap: 7px; }
+  .experience .social-page .social-progressive > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; padding: 14px; }
+  .experience .social-page .social-progressive > summary b { grid-column: 1; font-size: 16px; }
+  .experience .social-page .social-progressive > summary span { grid-column: 1; margin-left: 0; font-size: 11px; }
+  .experience .social-page .social-progressive > summary::after { grid-column: 2; grid-row: 1 / 3; }
+  .experience .social-page .community-feed { padding: 16px; }
+  .experience .social-page .community-feed > article { gap: 8px; }
+  .experience .social-page .community-feed > article p { padding: 12px; font-size: 14px; }
+  .experience .social-page .community-compose { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .experience .social-page .community-compose h2 { font-size: 21px; }
+  .experience .social-page .island-pet-editor { grid-template-columns: 80px minmax(0, 1fr); padding: 16px; gap: 12px; }
+  .experience .social-page .island-pet-editor > img { grid-row: auto; width: 80px; height: 100px; }
+  .experience .social-page .island-pet-editor .pet-skins { grid-column: 1 / -1; }
+}
+
+@media (max-width: 360px) {
+  .experience .social-page .island-header h1 { font-size: 26px; }
+  .experience .social-page .island-header-actions button { padding-inline: 8px; font-size: 12px; }
+  .experience .social-page .island-map-toolbar button { padding-inline: 7px; }
+  .experience .social-page .island-focus-card { padding: 14px 10px; }
+  .experience .social-page .island-focus-card > img { height: 150px; }
+  .experience .social-page .island-focus-card h2 { font-size: 17px; }
+  .experience .social-page .island-focus-card > div { padding: 9px; }
+}

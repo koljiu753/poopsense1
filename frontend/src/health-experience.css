@@ -1,0 +1,142 @@
+/* The record book continues the same character through observation and response. */
+.record-load-error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; padding: 14px; border: 2px solid var(--ink); border-radius: 12px; background: #fff2ad; font-size: 14px; }
+.record-load-error button { min-height: 44px; padding: 8px 14px; border: 2px solid var(--ink); border-radius: 9px; color: var(--ink); background: white; }
+.experience .health-page .health-sections { display: flex; gap: 6px; padding: 5px; margin-bottom: 18px; border: 2px solid var(--ink); background: white; border-radius: 14px; }
+.experience .health-sections button { flex: 1; min-width: 0; border: 0; border-radius: 9px; padding: 8px; color: var(--ink); background: transparent; font-weight: 900; }
+.experience .health-sections button[aria-pressed="true"] { background: var(--yellow); }
+.experience .health-sections button small { display: block; font-size: 10px; }
+.experience .health-page .records-title { display: flex; gap: 10px; justify-content: space-between; padding: 14px 16px; background: var(--yellow); border-radius: 12px 12px 0 0; border-bottom: 2px solid var(--ink); }
+.experience .health-page .records-title span { font-size: 12px; }
+.experience .health-page .record-details { margin-top: 16px; }
+.experience .health-page .action-empty { background: var(--yellow); border: 3px solid var(--ink); border-radius: 20px; padding: 24px; text-align: center; }
+.experience .health-page .action-empty img { height: 130px; width: 160px; object-fit: contain; }
+.experience .health-page .action-empty h2 { font-size: 22px; }
+.experience .health-page .action-empty p { font-size: 14px; }
+.experience .health-page .action-empty button { background: var(--pink); border: 2px solid var(--ink); padding: 10px 18px; border-radius: 10px; }
+.experience .health-page .health-sections ~ div { scroll-margin-top: 80px; }
+.experience .health-page .health-chapter { display: grid; grid-template-columns: 1fr 190px; gap: 20px; align-items: center; padding: 20px 28px; margin-bottom: 22px; border: 3px solid var(--ink); border-radius: 20px; background: var(--yellow); box-shadow: 5px 5px 0 var(--ink); }
+.experience .health-chapter small { font: 900 12px/1.3 'Arial Black', sans-serif; letter-spacing: 2px; color: var(--ink); }
+.experience .health-chapter h1 { font-size: 32px; font-weight: 950; margin: 8px 0; text-wrap: balance; }
+.experience .health-chapter p { color: var(--ink); margin: 0; }
+.chapter-character { position: relative; text-align: center; }
+.chapter-character img { display: block; width: 100%; height: 125px; object-fit: contain; transform: rotate(-7deg); }
+.chapter-character span { position: relative; display: inline-block; background: var(--cream); border: 2px solid var(--ink); padding: 3px 8px; font-size: 11px; font-weight: 800; transform: rotate(3deg); }
+.experience .health-page .member-filter { display: flex; flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 22px; }
+.experience .health-page .member-filter > select { min-width: 0; max-width: 50%; width: 200px; border: 2px solid var(--ink); background: var(--cream); color: var(--ink); font-weight: 800; }
+.experience .health-page .period-switch { display: flex; margin: 0; padding: 3px; border: 2px solid var(--ink); border-radius: 12px; flex-shrink: 0; }
+.experience .health-page .period-switch button { border-radius: 8px; padding: 6px 12px; color: var(--ink); }
+.experience .health-page .period-switch button[aria-pressed="true"] { background: var(--blue); color: white; }
+.experience .health-page .action-followup-panel { border: 3px solid var(--ink); border-radius: 20px; box-shadow: 5px 5px 0 var(--ink); background: var(--cream); padding: 0 22px 22px; overflow: hidden; }
+.experience .health-page .action-followup-panel > header { margin: 0 -22px 18px; padding: 15px 22px; border-bottom: 3px solid var(--ink); background: var(--blue); background-image: radial-gradient(#0003 1px, transparent 1px); background-size: 8px 8px; color: white; }
+.experience .health-page .action-followup-panel > header small { color: white; font-size: 12px; }
+.experience .health-page .action-followup-panel > header b { font-size: 24px; }
+.experience .health-page .action-followup-panel > label { display: block; font-size: 12px; }
+.experience .health-page .action-followup-panel select { border: 2px solid var(--ink); background: white; color: var(--ink); }
+.experience .health-page .action-timeline { gap: 12px; margin: 20px 0; }
+.experience .health-page .action-timeline li { position: relative; padding: 14px; border: 2px solid var(--ink); border-radius: 12px; min-width: 0; background: white; }
+.experience .health-page .action-timeline li.timeline-choice { background: #ffecf4; }
+.experience .health-page .action-timeline li.timeline-next { background: #fff2ad; }
+.experience .health-page .timeline-art { display: grid; place-items: center; height: 75px; margin-bottom: 12px; font-size: 34px; font-weight: 950; color: var(--ink); }
+.experience .health-page .timeline-art img { width: 100%; height: 75px; object-fit: contain; }
+.experience .health-page .timeline-art span { color: var(--ink); font-size: 36px; margin: 0; }
+.experience .health-page .action-timeline small { font-size: 11px; color: var(--ink); font-weight: 800; margin-bottom: 6px; }
+.experience .health-page .action-timeline b { font-size: 14px; }
+.experience .health-page .timeline-report-link { padding: 5px 0; border: 0; border-radius: 0; background: transparent; color: #064baa; text-align: left; font-size: 12px; }
+.experience .health-page .action-followup-body { display: block; border-top: 1px dashed var(--ink); padding-top: 10px; font-size: 13px; }
+.experience .health-page .action-followup-actions { margin-top: 12px !important; }
+.experience .health-page .action-followup-actions button { border: 2px solid var(--ink); background: var(--yellow); color: var(--ink); }
+.experience .health-page .action-followup-actions button[aria-pressed="true"] { background: var(--pink); box-shadow: 2px 2px 0 var(--ink); }
+.experience .health-page .action-followup-actions > span { background: white; border: 1px solid var(--ink); font-size: 12px; }
+.experience .health-page :is(.progressive-panel,.baseline-card,.change-card,.weekly-rhythm,.trend-lane,.metric,.inbox-panel) { border: 2px solid var(--ink); border-radius: 14px; box-shadow: 3px 3px 0 var(--ink); }
+.experience .health-page .progressive-panel { margin: 20px 0; }
+.experience .health-page .progressive-panel > summary { padding: 16px; color: var(--ink); }
+.experience .health-page .record-details > summary { background: var(--yellow); border-radius: 12px; }
+.experience .health-page .record-details[open] > summary { border-bottom: 2px solid var(--ink); border-radius: 12px 12px 0 0; }
+.experience .health-page .history { border: 0; box-shadow: none; margin: 0; background: transparent; }
+.experience .health-page .history-row { grid-template-columns: 60px minmax(0,1fr) auto; padding: 14px 0; }
+.record-avatar { display: grid; place-items: center; border-radius: 10px; width: 60px; height: 60px; background: var(--yellow); }
+.record-avatar.redline { background: var(--pink); }
+.record-avatar img { width: 100%; height: 55px; object-fit: contain; }
+.experience .health-page .baseline-card { background: var(--yellow); }
+.experience .health-page .change-card { border-top: 8px solid var(--pink); }
+.experience .health-page .longitudinal-overview small { color: var(--ink); }
+.experience .health-page .longitudinal-overview b { font-size: 22px; }
+.experience .health-page .longitudinal-overview p { font-size: 14px; line-height: 1.6; }
+.experience .health-page .baseline-progress { border: 2px solid var(--ink); background: white; }
+.experience .health-page .metric { padding: 16px 20px; }
+.experience .health-page .metric strong { font-size: 32px; }
+.experience .health-page .weekly-rhythm { background: var(--cream); }
+.experience .health-page .trend-lane { border-left: 8px solid var(--lane-color); }
+.experience .health-page .coverage-note { border: 2px dashed var(--ink); background: #fff2ad; color: var(--ink); box-shadow: none; }
+.experience .health-page .inbox-panel { padding: 20px; }
+@media(max-width: 900px) {
+  .experience .health-page .health-chapter { grid-template-columns: minmax(0,1fr) 118px; padding: 16px; gap: 8px; }
+  .experience .health-chapter h1 { font-size: 24px; }
+  .experience .health-chapter p { font-size: 12px; }
+  .chapter-character img { height: 92px; }
+  .chapter-character span { font-size: 9px; padding: 2px 5px; }
+}
+@media(max-width: 600px) {
+  .experience .health-page .action-followup-panel { padding: 0 14px 16px; }
+  .experience .health-page .action-followup-panel > header { margin-inline: -14px; padding: 12px 16px; }
+  .experience .health-page .action-timeline { grid-template-columns: 1fr; gap: 10px; }
+  .experience .health-page .action-timeline li { display: grid; grid-template-columns: 56px minmax(0,1fr); gap: 10px; padding: 12px 10px; align-items: center; }
+  .experience .health-page .timeline-art { height: 60px; margin: 0; }
+  .experience .health-page .timeline-art img { height: 60px; }
+  .experience .health-page .action-timeline time, .experience .health-page .action-timeline span { margin-top: 4px; font-size: 11px; }
+  .experience .health-page .action-timeline .timeline-art span { font-size: 32px; }
+  .experience .health-page .history-row { grid-template-columns: 52px minmax(0,1fr); gap: 10px; }
+  .experience .health-page .history-row .correction { grid-column: 2; justify-self: start; }
+  .experience .health-page .history-row > .text-button { grid-column: 2; justify-self: start; }
+  .record-avatar { width: 52px; height: 52px; }
+  .experience .health-page .progressive-panel > summary { flex-wrap: wrap; gap: 4px; }
+}
+@media(max-width: 360px) {
+  .experience .health-page .health-chapter { grid-template-columns: minmax(0,1fr) 95px; padding: 12px; }
+  .experience .health-chapter h1 { font-size: 22px; }
+  .experience .health-page .period-switch button { padding-inline: 10px; }
+  .experience .health-page .member-filter > select { padding-inline: 10px; }
+}
+/* Put the next useful observation and response before the detailed history. */
+.experience .health-actions .health-chapter { display: block; padding: 12px 16px; margin-bottom: 14px; box-shadow: 3px 3px 0 var(--ink); }
+.experience .health-actions .health-chapter h1 { margin: 0; font-size: 23px; }
+.experience .health-actions .health-chapter :is(small,p,.chapter-character) { display: none; }
+.experience .health-actions .health-controls { display: grid; grid-template-columns: minmax(90px, .4fr) minmax(0, 1fr); align-items: start; gap: 10px; margin-bottom: 16px; }
+.experience .health-actions .member-filter { margin: 0; padding-top: 5px; }
+.experience .health-actions .member-filter > select { width: 100%; max-width: 100%; }
+.experience .health-actions .health-sections { margin: 0; }
+.experience .health-page .action-followup-panel { padding-top: 14px; }
+.experience .health-page .followup-observation { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 12px; padding: 14px; margin: 16px -8px 0; border: 2px solid var(--ink); border-radius: 14px; background: var(--yellow); }
+.experience .followup-observation img { width: 88px; height: 88px; object-fit: contain; }
+.experience .followup-observation h3 { font-size: 20px; line-height: 1.4; margin: 4px 0; }
+.experience .followup-observation :is(small,time) { font-size: 12px; }
+.experience .followup-observation p { font-size: 13px; margin: 4px 0 0; }
+.experience .health-page .action-followup-body { border: 0; padding-top: 8px; }
+.experience .health-page .action-followup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.experience .health-page .action-followup-actions > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; gap: 8px; }
+.experience .health-page .action-followup-actions small { grid-column: 1 / -1; color: var(--ink); font-size: 14px; line-height: 1.5; font-weight: 700; }
+.experience .health-page .action-followup-actions button { min-height: 44px; min-width: 0; padding: 8px 6px; font-size: 14px; }
+.experience .health-page .action-followup-actions > .followup-plan-state { display: block; width: 100%; padding: 2px 0; border: 0; background: transparent; font-size: 13px; }
+.experience .followup-plan-state .followup-directions { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+.experience .followup-boundary { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 12px 0; }
+.experience .followup-saved-reply { padding: 10px 12px; background: #ffecf4; border-left: 3px solid var(--pink); border-radius: 4px; }
+.experience .followup-source { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-top: 1px dashed var(--ink); padding-top: 12px; }
+.experience .followup-source > div { min-width: 0; }
+.experience .followup-source :is(small,b,span) { display: block; }
+.experience .followup-source small { font-size: 11px; color: var(--muted); }
+.experience .followup-source b { font-size: 14px; margin: 3px 0; }
+.experience .followup-source span { font-size: 12px; overflow-wrap: anywhere; }
+.experience .followup-source button { flex-shrink: 0; min-height: 44px; }
+.experience .followup-context { margin-top: 14px; border-top: 1px dashed var(--ink); }
+.experience .followup-context summary { padding: 12px 0; font-size: 13px; min-height: 44px; }
+.experience .health-page .followup-context .action-timeline { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 8px 0; }
+.experience .health-page .followup-context .action-timeline li { display: block; }
+@media (max-width: 360px) {
+  .experience .health-actions .health-controls { grid-template-columns: 86px minmax(0, 1fr); gap: 6px; }
+  .experience .health-actions .health-sections { gap: 2px; padding: 4px; }
+  .experience .health-actions .health-sections button { padding-inline: 3px; font-size: 14px; }
+  .experience .health-page .followup-observation { grid-template-columns: 64px minmax(0, 1fr); padding: 10px; gap: 8px; }
+  .experience .followup-observation img { width: 64px; height: 76px; }
+  .experience .followup-observation h3 { font-size: 18px; }
+  .experience .followup-source { flex-wrap: wrap; gap: 4px 12px; }
+}

@@ -58,6 +58,8 @@ class DeviceSessionInput(BaseModel):
     def validate_contract(self):
         if self.schema_version.split(".", 1)[0] != "1":
             raise ValueError("unsupported schema major version")
+        if self.timestamp.utcoffset() is None or self.end_timestamp.utcoffset() is None:
+            raise ValueError("timestamps must include a timezone (Z or UTC offset)")
         if self.end_timestamp < self.timestamp:
             raise ValueError("end_timestamp must not precede timestamp")
         measured = int((self.end_timestamp - self.timestamp).total_seconds())
@@ -117,6 +119,33 @@ class TrendDimension(BaseModel):
     baseline_status: Literal["insufficient", "within_baseline", "deviated"] = "insufficient"
 
 
+class BaselineProgress(BaseModel):
+    status: Literal["collecting", "established"]
+    current_valid_sessions: int
+    required_valid_sessions: int
+    remaining_sessions: int
+    message: str
+
+
+class TrendWeek(BaseModel):
+    week_start: date
+    week_end: date
+    assigned_sessions: int
+    valid_sessions: int
+    coverage: float
+    normal_ratio: float | None = None
+    dry_ratio: float | None = None
+    loose_ratio: float | None = None
+    dominant_shape: str | None = None
+
+
+class LatestChange(BaseModel):
+    status: Literal["insufficient", "improved", "stable", "worsened", "changed"]
+    previous_shape: str | None = None
+    current_shape: str | None = None
+    message: str
+
+
 class MemberTrend(BaseModel):
     household_id: str
     member_id: str
@@ -128,6 +157,9 @@ class MemberTrend(BaseModel):
     frequency_per_week: float
     consecutive_abnormal: int
     dimensions: dict[str, TrendDimension]
+    baseline_progress: BaselineProgress
+    weekly_series: list[TrendWeek]
+    latest_change: LatestChange
 
 
 class GrantInput(BaseModel):
@@ -175,11 +207,46 @@ class AgentChatInput(BaseModel):
     conversation_id: str | None = None
 
 
+class AgentSessionAnalysisInput(BaseModel):
+    member_id: str
+    session_id: str = Field(min_length=1, max_length=100)
+    conversation_id: str | None = None
+
+
+class AgentFindingResult(BaseModel):
+    dimension: Literal["shape", "color", "odor"]
+    label: str
+    value: str
+    confidence: float
+    source: str
+
+
+class AgentRecommendationResult(BaseModel):
+    category: Literal["hydration", "diet", "movement", "observation", "care"]
+    title: str
+    guidance: str
+    timing: Literal["now", "today", "next_time"]
+
+
+class AgentAnalysisReportResult(BaseModel):
+    session_id: str
+    generated_at: datetime
+    status: Literal["ready", "insufficient", "urgent"]
+    reliable: bool
+    headline: str
+    summary: str
+    findings: list[AgentFindingResult]
+    recommendations: list[AgentRecommendationResult]
+    next_step: str
+    followup_id: str | None = None
+
+
 class AgentMessageResult(BaseModel):
     message_id: int
     role: str
     content: str
     created_at: datetime
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentChatResult(BaseModel):
@@ -194,6 +261,7 @@ class AgentChatResult(BaseModel):
     skill: str
     run_id: str
     skill_version: str
+    report: AgentAnalysisReportResult | None = None
 
 
 class RobotPoseCaptureInput(BaseModel):
@@ -420,6 +488,33 @@ class AgentFeedbackResult(BaseModel):
     updated_at: datetime
 
 
+class HealthActionFollowupUpdate(BaseModel):
+    adoption_status: Literal["suggested", "accepted", "completed", "skipped"] | None = None
+    perceived_outcome: Literal["pending", "improved", "same", "worse"] | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def has_update(self):
+        if self.adoption_status is None and self.perceived_outcome is None and self.note is None:
+            raise ValueError("at least one follow-up field is required")
+        return self
+
+
+class HealthActionFollowupResult(BaseModel):
+    followup_id: str
+    member_id: str
+    source_session_id: str
+    recommendation_categories: list[str]
+    adoption_status: Literal["suggested", "accepted", "completed", "skipped"]
+    perceived_outcome: Literal["pending", "improved", "same", "worse"]
+    observed_outcome: Literal["pending", "improved", "same", "worse", "changed", "insufficient"]
+    observed_from_session_id: str | None
+    observed_outcome_note: str | None
+    note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class PetProfileUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=50)
     selected_skin: Literal["classic", "blue_wave", "pop_star"]
@@ -564,6 +659,7 @@ class PoopVisualProfile(BaseModel):
 
 
 class MemberSessionResult(BaseModel):
+    simulated: bool = False
     session_id: str
     occurred_at: datetime
     assignment_version: int
