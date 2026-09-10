@@ -492,11 +492,11 @@ function NavButton({
 }
 
 const POOP_VISUALS = {
-  compact: { asset: "/poop-shape-compact-yellow-v2.png", label: "紧实成团" },
-  elongated: { asset: "/poop-shape-elongated-yellow-v2.png", label: "顺滑长条" },
-  scattered: { asset: "/poop-shape-scattered-yellow-v2.png", label: "分散颗粒" },
-  irregular: { asset: "/poop-shape-irregular-yellow-v2.png", label: "不规则形态" },
-  uncertain: { asset: "/poopsense-mascot-pop-v1.png", label: "等待可靠判断" },
+  compact: { asset: "/poop-shape-compact-yellow-v2.webp", label: "紧实成团" },
+  elongated: { asset: "/poop-shape-elongated-yellow-v2.webp", label: "顺滑长条" },
+  scattered: { asset: "/poop-shape-scattered-yellow-v2.webp", label: "分散颗粒" },
+  irregular: { asset: "/poop-shape-irregular-yellow-v2.webp", label: "不规则形态" },
+  uncertain: { asset: "/poopsense-mascot-pop-v1.webp", label: "等待可靠判断" },
 } as const;
 
 function sessionVisual(session?: MemberSession) {
@@ -960,8 +960,11 @@ function AgentDoctor({
           )
         : await api.agentChat(config, memberId, clean, conversationId);
       setConversationId(result.conversation_id);
-      setAnalysisReport(result.report ?? null);
-      setFollowup(null);
+      // Plain follow-up answers keep the record's report and saved response.
+      if (result.report) {
+        setAnalysisReport(result.report);
+        setFollowup(null);
+      }
       setDelegation(`${agentRoleLabel(result.delegated_agent)} · ${skillLabel(result.skill)}`);
       setAgentRun(null);
       if (!result.report) {
@@ -976,7 +979,7 @@ function AgentDoctor({
         result.report?.followup_id ? api.actionFollowups(config, memberId) : Promise.resolve([]),
         api.agentRun(config, result.run_id),
       ]);
-      if (followupResult.status === "fulfilled" && detailFeedbackRevision === feedbackRevision.current) {
+      if (result.report && followupResult.status === "fulfilled" && detailFeedbackRevision === feedbackRevision.current) {
         setFollowup(followupResult.value.find((item) => item.followup_id === result.report?.followup_id) ?? null);
       }
       if (runResult.status === "fulfilled") setAgentRun(runResult.value);
@@ -1069,7 +1072,7 @@ function AgentDoctor({
       </div>
       <div className="doctor-layout">
         <aside>
-          <img src="/poopsense-mascot-pop-v1.png" alt="Agent 医生形象" />
+          <img src="/poopsense-mascot-pop-v1.webp" alt="Agent 医生形象" />
           <b>我能帮你</b>
           <p>
             理解本次记录
@@ -1158,7 +1161,7 @@ function AgentDoctor({
               ) : null}
             </details>
           ) : null}
-          {!latestSession && !analysisReport ? <div className="getting-started"><img src="/poopsense-mascot-pop-v1.png" alt="" /><div><h2>先有记录，再慢慢了解</h2><p>回首页体验一次模拟检测，或到健康页确认待认领记录。收到结果后，会自动整理观察和建议。</p><button onClick={onBack}>回首页体验 →</button></div></div> : null}
+          {!latestSession && !analysisReport ? <div className="getting-started"><img src="/poopsense-mascot-pop-v1.webp" alt="" /><div><h2>先有记录，再慢慢了解</h2><p>回首页体验一次模拟检测，或到健康页确认待认领记录。收到结果后，会自动整理观察和建议。</p><button onClick={onBack}>回首页体验 →</button></div></div> : null}
           <div className="quick-prompts">
             <span>对这次结果还有疑问？</span>
             <button disabled={!historyReady || sending} onClick={() => void send("帮我看看最近趋势")}>
@@ -1470,7 +1473,7 @@ function ActionFollowupPanel({ config, memberId, refreshKey, sessions, onOpenRep
   }
   const latest = requestedSource ? items.find(item => item.source_session_id === requestedSource)
     : items.find(item => item.adoption_status === "accepted" || item.adoption_status === "completed") ?? items[0];
-  if (!latest && !error && !loadError) return <div className="action-empty"><img src="/poopsense-mascot-pop-v1.png" alt="" /><h2>{loading ? "正在找回你的回应…" : requestedSource ? "暂时没读到这条记录的行动" : "这里会接着记下你的选择"}</h2><p>{loading ? "稍等片刻。" : requestedSource ? "可以重新读取，或回到记录册查看原报告。" : "打开一条记录，选好想尝试的建议，再回来看看后续变化。"}</p>{!loading && <>{requestedSource && <button onClick={() => setRefreshVersion(version => version + 1)}>重新读取</button>}<button onClick={onShowRecords}>去看记录 →</button></>}</div>;
+  if (!latest && !error && !loadError) return <div className="action-empty"><img src="/poopsense-mascot-pop-v1.webp" alt="" /><h2>{loading ? "正在找回你的回应…" : requestedSource ? "暂时没读到这条记录的行动" : "这里会接着记下你的选择"}</h2><p>{loading ? "稍等片刻。" : requestedSource ? "可以重新读取，或回到记录册查看原报告。" : "打开一条记录，选好想尝试的建议，再回来看看后续变化。"}</p>{!loading && <>{requestedSource && <button onClick={() => setRefreshVersion(version => version + 1)}>重新读取</button>}<button onClick={onShowRecords}>去看记录 →</button></>}</div>;
   const source = sessions.find(item => item.session_id === latest?.source_session_id);
   const comparison = sessions.find(item => item.session_id === latest?.observed_from_session_id);
   const recommendationDirections = latest?.recommendation_categories?.map(category => ({ hydration: "补水", diet: "饮食", movement: "日常活动", observation: "观察", care: "寻求专业帮助" }[category] ?? "生活建议")).join("、");
@@ -1502,7 +1505,7 @@ function ActionFollowupPanel({ config, memberId, refreshKey, sessions, onOpenRep
       )}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {latest && <div className="followup-observation">
-        <img src={comparison ? sessionVisual(comparison).asset : "/poopsense-mascot-pop-v1.png"} alt={comparison ? "后续记录的形象" : ""} />
+        <img src={comparison ? sessionVisual(comparison).asset : "/poopsense-mascot-pop-v1.webp"} alt={comparison ? "后续记录的形象" : ""} />
         <div><small>后续观察</small><h3>{observedLabel}</h3>{comparison ? <time>{new Date(comparison.occurred_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time> : <p>有可比较的记录后，这里会接着更新。</p>}</div>
       </div>}
       {latest ? (
@@ -2049,7 +2052,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
           </div>
           <div className="island-canvas">
             <div className="island-map-world" style={{ transform: `scale(${mapZoom})` }}>
-              <img className="island-map-image" src="/poop-island-map-v1.png" alt="便便岛：草坪、咖啡小屋、中央广场、朋友码头和我的小屋" />
+              <img className="island-map-image" src="/poop-island-map-v1.webp" loading="lazy" decoding="async" alt="便便岛：草坪、咖啡小屋、中央广场、朋友码头和我的小屋" />
               <button className="island-place place-lawn" onClick={() => visitPlace("lawn")}><span>晒太阳草坪</span></button>
               <button className="island-place place-coffee" onClick={() => visitPlace("coffee")}><span>咖啡小屋</span></button>
               <button className="island-place place-plaza" onClick={() => visitPlace("plaza")}><span>中央广场</span></button>
@@ -2063,7 +2066,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
                   aria-label={`查看${agent.alias}`}
                 >
                   <span className="agent-speech">{agent.mine ? "我在这里" : "···"}</span>
-                  <img src="/poop-island-agent-v1.png" alt="" />
+                  <img src="/poop-island-agent-v1.webp" alt="" />
                   <small>{agent.alias}</small>
                 </button>
               ))}
@@ -2075,7 +2078,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
           </div>
 
           <article className="island-focus-card" aria-label="便便宠物和皮肤图鉴">
-            <img src="/poop-island-agent-v1.png" alt="当前选中的 Agent" />
+            <img src="/poop-island-agent-v1.webp" alt="当前选中的 Agent" />
             <div>
               <small>{selectedAgent.mine ? "我的伙伴" : "岛上遇见"}</small>
               <h2>{selectedAgent.alias}</h2>
@@ -2105,7 +2108,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
               aria-label={`${islandAgents[0].alias} · 代表当前成员`}
               onClick={() => setSelectedAgentId("mine")}
             >
-              <img src="/poop-island-agent-v1.png" alt="" />
+              <img src="/poop-island-agent-v1.webp" alt="" />
               <span><b>{islandAgents[0].alias}</b><small><i /> 代表当前成员</small></span>
             </button>
           </section>
@@ -2119,7 +2122,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
                 aria-label={`${agent.alias} · ${connectedAliases.includes(agent.alias) ? "已连接" : "岛上可见"}`}
                 onClick={() => setSelectedAgentId(agent.id)}
               >
-                <img src="/poop-island-agent-v1.png" alt="" />
+                <img src="/poop-island-agent-v1.webp" alt="" />
                 <span><b>{agent.alias}</b><small><i /> {connectedAliases.includes(agent.alias) ? "已连接" : "岛上可见"}</small></span>
               </button>
             ))}
@@ -2129,7 +2132,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
             <div className="island-encounters">
               {islandAgents.slice(1, 3).map((agent) => (
                 <button key={agent.id} onClick={() => setSelectedAgentId(agent.id)}>
-                  <img src="/poop-island-agent-v1.png" alt="" /><span>{agent.alias}</span>
+                  <img src="/poop-island-agent-v1.webp" alt="" /><span>{agent.alias}</span>
                 </button>
               ))}
             </div>
@@ -2178,7 +2181,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
       <details className="progressive-panel social-progressive island-pet-settings">
         <summary><b>我的小屋</b><span>名字、皮肤和陪伴状态</span></summary>
         {pet ? <div className="island-pet-editor">
-          <img src="/poop-island-agent-v1.png" alt={`${pet.name}，${petMoodLabel(pet.mood)}`} />
+          <img src="/poop-island-agent-v1.webp" alt={`${pet.name}，${petMoodLabel(pet.mood)}`} />
           <label>伙伴名字<input aria-label="宠物名字" value={petName} onChange={(event) => setPetName(event.target.value)} /></label>
           <div className="pet-skins" aria-label="宠物皮肤">
             {PET_SKINS.map((skin) => {
@@ -2610,7 +2613,7 @@ function Settings({
   }
   return (
     <section className="page settings settings-page">
-      <header className="settings-intro"><div><small>MY CORNER</small><h1>{currentMember ? `${currentName} 的小窝` : "我的小窝"}</h1><p>家人、设备和我的偏好，都收在这里。</p></div><div className="settings-keeper"><img src="/poopsense-mascot-pop-v1.png" alt="" /><span>慢慢了解你</span></div></header>
+      <header className="settings-intro"><div><small>MY CORNER</small><h1>{currentMember ? `${currentName} 的小窝` : "我的小窝"}</h1><p>家人、设备和我的偏好，都收在这里。</p></div><div className="settings-keeper"><img src="/poopsense-mascot-pop-v1.webp" alt="" /><span>慢慢了解你</span></div></header>
       {(settingsError || settingsRefreshError) && <p className="chat-error" role="alert">{[settingsError, settingsRefreshError].filter(Boolean).join(" ")}</p>}
       <div className="profile-grid">
         <article className="manage-card family-card">
@@ -2640,7 +2643,9 @@ function Settings({
           <span className="sticker">DEVICE</span>
           <div className="device-visual">
             <img
-              src="/poopsense-device-pop-v2.png"
+              src="/poopsense-device-pop-v2.webp"
+              loading="lazy"
+              decoding="async"
               alt="PoopSense 智能马桶座圈"
             />
           </div>

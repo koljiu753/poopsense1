@@ -1,5 +1,5 @@
 {
-  "source": "https://raw.githubusercontent.com/koljiu753/poopsense1/9026ab879c6fffdd9e0e71392102b989ebe6244b/frontend/public",
+  "source": "https://raw.githubusercontent.com/koljiu753/poopsense1/0b4182b7f51460fe18707bd220b36083ca66657e/frontend/public",
   "files": [
     {
       "name": "poop-island-agent-v1.png",
@@ -48,6 +48,38 @@
     {
       "name": "poopsense-mascot-pop-v1.png",
       "sha256": "888d9151bcf54bee3579731ada54b77b58865cebea79c2288cc4a30170636a9f"
+    },
+    {
+      "name": "poop-island-agent-v1.webp",
+      "sha256": "3ef8fc8e49449e03d48135d10c8cd279bce8e5cdae46e37b38ab54d34c87450a"
+    },
+    {
+      "name": "poop-island-map-v1.webp",
+      "sha256": "b0f08d1811235b83671b64ba24ff56dce013f8c6b2c9f9cb972e4c2ef5f563c6"
+    },
+    {
+      "name": "poop-shape-compact-yellow-v2.webp",
+      "sha256": "2d660a6d3392c6878b43b3598a393d45cf02d99bcec7ee9782bfd3711c4bbe4f"
+    },
+    {
+      "name": "poop-shape-elongated-yellow-v2.webp",
+      "sha256": "dbc2ba876a9f320cf78719e04850b8d76e4a44cddadbc495d688292c8fed343b"
+    },
+    {
+      "name": "poop-shape-irregular-yellow-v2.webp",
+      "sha256": "044f0c399dbb164cadb7d0c684eab6e5472878ab1bb7cf081ebf77b63cd99c84"
+    },
+    {
+      "name": "poop-shape-scattered-yellow-v2.webp",
+      "sha256": "441b9bfd208db2a07a91ea85444081f603e110a994934833cbd52db78f458585"
+    },
+    {
+      "name": "poopsense-device-pop-v2.webp",
+      "sha256": "5221b5ecde5d5bc4dec5f86ac1274e5166329e3d4d49b63675ed47d29c3f1345"
+    },
+    {
+      "name": "poopsense-mascot-pop-v1.webp",
+      "sha256": "9b789c3c9723d4ba939cf47770c60eb22d56cb4727a89d8bdb323df2d791b890"
     }
   ]
 }

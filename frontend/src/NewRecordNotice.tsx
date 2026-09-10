@@ -14,7 +14,7 @@ export default function NewRecordNotice({ onOpen, onDismiss, memberName, simulat
   const recordTime = occurredAt ? new Date(occurredAt) : null;
   return (
     <aside className={`new-record-notice${urgent ? " is-urgent" : ""}`} aria-label="新记录提醒">
-      <img className="new-record-notice-character" src="/poopsense-mascot-pop-v1.png" alt="" width={56} height={56} />
+      <img className="new-record-notice-character" src="/poopsense-mascot-pop-v1.webp" alt="" width={56} height={56} />
       <div className="new-record-notice-copy" role={urgent ? "alert" : "status"} aria-live={urgent ? "assertive" : "polite"} aria-atomic="true">
         <strong>{urgent ? "新记录需要优先查看" : "有一条新记录，等你来看"}</strong>
         {urgent && <p className="new-record-notice-safety">请查看这次记录的安全提醒</p>}

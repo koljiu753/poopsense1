@@ -674,6 +674,63 @@ describe("PoopSense core UI", () => {
     expect(mocked.analyzeSession).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["success", "failure"] as const)("keeps the report and saved choice through a plain follow-up with late run details %s", async (detailsOutcome) => {
+    const response = await mocked.analyzeSession.getMockImplementation()!(null as never, "m_001", "ses_latest");
+    mocked.analyzeSession.mockResolvedValue({ ...response, report: { ...response.report!, followup_id: "saved_plan" } });
+    mocked.analyzeSession.mockClear();
+    mocked.sessions.mockResolvedValue([{
+      session_id: "ses_latest", occurred_at: "2026-08-29T12:30:00Z",
+      assignment_version: 1, assessment_status: "assessed", risk_level: "normal", message: "本次检测已完成。",
+    }]);
+    mocked.updateActionFollowup.mockResolvedValueOnce({ followup_id: "saved_plan", adoption_status: "accepted" } as never);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "看看这次结果 →" }));
+    await user.click(await screen.findByRole("button", { name: "今天会试试" }));
+    expect(await screen.findByText(/已保存你的意向/)).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "看看最近趋势" })).toBeEnabled());
+    const report = screen.getByRole("heading", { name: /继续保持稳定节奏/ });
+    const choice = screen.getByRole("button", { name: "今天会试试" });
+    const followupReads = mocked.actionFollowups.mock.calls.length;
+    const run = await mocked.agentRun.getMockImplementation()!(null as never, "run_question");
+    let finishChat!: (value: typeof response) => void;
+    let finishDetails!: (value: typeof run) => void;
+    let failDetails!: (reason: Error) => void;
+    mocked.agentChat.mockImplementationOnce(() => new Promise(resolve => { finishChat = resolve; }));
+    mocked.agentRun.mockImplementationOnce(() => new Promise((resolve, reject) => { finishDetails = resolve; failDetails = reject; }));
+    await user.type(screen.getByLabelText("描述你的情况"), "这条建议该怎么理解？");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(screen.getByRole("button", { name: "思考中…" })).toBeDisabled();
+    expect(report).toBeVisible();
+    expect(choice).toHaveAttribute("aria-pressed", "true");
+
+    await act(async () => { finishChat({
+      ...response, report: null, run_id: "run_question",
+      message: { ...response.message, message_id: 29, content: "可以从报告里的第一项生活建议开始理解。" },
+    }); });
+    expect(screen.getByText("可以从报告里的第一项生活建议开始理解。")).toBeVisible();
+    expect(report).toBeVisible();
+    expect(choice).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("新的身体信号已到达")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "思考中…" })).toBeDisabled();
+
+    await act(async () => {
+      if (detailsOutcome === "success") finishDetails(run);
+      else failDetails(new ApiError(404, "AGENT_RUN_NOT_FOUND"));
+    });
+    expect(report).toBeVisible();
+    expect(choice).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(/已保存你的意向/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "查看行动记录 →" })).toBeVisible();
+    expect(screen.getByText("可以从报告里的第一项生活建议开始理解。")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "立即自动分析 →" })).not.toBeInTheDocument();
+    expect(mocked.actionFollowups).toHaveBeenCalledTimes(followupReads);
+    expect(mocked.analyzeSession).toHaveBeenCalledTimes(1);
+    expect(mocked.agentChat).toHaveBeenCalledWith(expect.anything(), "m_001", "这条建议该怎么理解？", "conv_analysis");
+    if (detailsOutcome === "failure") expect(screen.getByText(/回复已生成，部分跟进信息暂时未加载/)).toBeVisible();
+    else expect(screen.queryByText(/回复已生成，部分跟进信息暂时未加载/)).not.toBeInTheDocument();
+  });
+
   it("clears an older report on failed new analysis and retries the same record", async () => {
     const result = await mocked.analyzeSession.getMockImplementation()!(null as never, "m_001", "ses_latest");
     mocked.analyzeSession.mockClear();
@@ -930,7 +987,7 @@ describe("PoopSense core UI", () => {
 
     render(<App />);
     const character = await screen.findByAltText("传感器映射的便便卡通形象：分散颗粒");
-    expect(character).toHaveAttribute("src", "/poop-shape-scattered-yellow-v2.png");
+    expect(character).toHaveAttribute("src", "/poop-shape-scattered-yellow-v2.webp");
     expect(character).toHaveAttribute("data-visual-variant", "scattered");
     expect(screen.getByText("最近一次记录 · 小风")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "有点干，照顾一下自己" })).toBeInTheDocument();
