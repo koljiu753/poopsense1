@@ -6,6 +6,7 @@ import ChatComposer from "./ChatComposer";
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -80,6 +81,85 @@ it("lets the user prepare the next question while waiting and retains it when th
   await user.click(screen.getByRole("button", { name: "发送 →" }));
   expect(onSend).toHaveBeenNthCalledWith(2, "下一条草稿\n继续补充");
   expect(onSend).toHaveBeenCalledTimes(2);
+});
+
+it("opens an arriving reply without submitting or discarding the next question's draft", async () => {
+  const user = userEvent.setup();
+  const onSend = vi.fn();
+  const onViewReply = vi.fn();
+  const { rerender } = render(<ChatComposer sending={false} onSend={onSend} />);
+  const input = screen.getByRole("textbox", { name: "描述你的情况" });
+  await user.type(input, "我还在写下一条{Enter}这段不要清掉");
+  expect(screen.queryByRole("button", { name: "查看刚收到的回答 ↓" })).not.toBeInTheDocument();
+  rerender(<ChatComposer sending={false} onSend={onSend} onViewReply={onViewReply} />);
+  expect(input).toHaveFocus();
+  expect(onViewReply).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "发送 →" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "查看刚收到的回答 ↓" }));
+  expect(onViewReply).toHaveBeenCalledTimes(1);
+  expect(onSend).not.toHaveBeenCalled();
+  expect(input).toHaveValue("我还在写下一条\n这段不要清掉");
+  rerender(<ChatComposer sending={false} onSend={onSend} />);
+  expect(screen.queryByRole("button", { name: "查看刚收到的回答 ↓" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "发送 →" }));
+  expect(onSend).toHaveBeenCalledExactlyOnceWith("我还在写下一条\n这段不要清掉");
+});
+
+it("preserves a scrolled multiline draft through viewport event bursts without rewriting unchanged geometry", () => {
+  vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+  const viewport = Object.assign(new EventTarget(), { width: 390, height: 844, offsetTop: 0 });
+  vi.stubGlobal("innerWidth", 390);
+  vi.stubGlobal("innerHeight", 844);
+  vi.stubGlobal("visualViewport", viewport);
+  render(<ChatComposer sending={false} onSend={vi.fn()} />);
+  const input = screen.getByRole("textbox", { name: "描述你的情况" }) as HTMLTextAreaElement;
+  const form = input.closest("form")!;
+  Object.defineProperty(input, "scrollHeight", { configurable: true, get: () => 480 });
+  const draft = "多行问题仍在编辑，不能因为键盘变化跳回开头。\n".repeat(8);
+  fireEvent.change(input, { target: { value: draft } });
+  act(() => input.focus());
+  input.setSelectionRange(8, 18);
+  input.scrollTop = 48;
+  act(() => {
+    viewport.height = 420;
+    viewport.dispatchEvent(new Event("resize"));
+    vi.advanceTimersToNextFrame();
+  });
+  expect(document.body).toHaveClass("chat-keyboard-open");
+  const geometryWrite = vi.spyOn(form.style, "setProperty");
+  const pageScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  for (let frame = 0; frame < 3; frame++) {
+    act(() => {
+      for (let event = 0; event < 12; event++) {
+        viewport.dispatchEvent(new Event("resize"));
+        viewport.dispatchEvent(new Event("scroll"));
+        window.dispatchEvent(new Event("resize"));
+      }
+      vi.advanceTimersToNextFrame();
+    });
+  }
+  expect(geometryWrite).not.toHaveBeenCalled();
+  expect(pageScroll).not.toHaveBeenCalled();
+  expect(input).toHaveFocus();
+  expect(input).toHaveValue(draft);
+  expect([input.selectionStart, input.selectionEnd, input.scrollTop]).toEqual([8, 18, 48]);
+  act(() => {
+    viewport.offsetTop = 80;
+    viewport.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersToNextFrame();
+  });
+  expect(form.style.getPropertyValue("--chat-keyboard-inset")).toBe("344px");
+  act(() => {
+    viewport.offsetTop = 0;
+    viewport.height = 844;
+    viewport.dispatchEvent(new Event("resize"));
+    vi.advanceTimersToNextFrame();
+  });
+  expect(document.body).not.toHaveClass("chat-keyboard-open");
+  expect(form.style.getPropertyValue("--chat-keyboard-inset")).toBe("0px");
+  expect(input).toHaveFocus();
+  expect(input).toHaveValue(draft);
+  expect([input.selectionStart, input.selectionEnd, input.scrollTop]).toEqual([8, 18, 48]);
 });
 
 it.each([

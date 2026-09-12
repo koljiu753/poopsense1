@@ -1,4 +1,6 @@
-.experience .doctor-page { padding-bottom: 120px; }
+.experience .doctor-page { padding-bottom: 120px; --chat-navigation-space: calc(84px + env(safe-area-inset-bottom, 0px)); }
+.chat-keyboard-space { display: none; --chat-reply-space: 0px; }
+.chat-keyboard-space.has-reply-shortcut { display: block; height: 52px; --chat-reply-space: 52px; }
 .experience .chat-panel .messages { overflow: visible; max-height: none; padding: 16px 0; gap: 20px; }
 .experience .chat-panel .message { min-width: 0; max-width: 100%; font-size: 16px; padding: 18px 20px; scroll-margin-top: 24px; }
 .experience .chat-panel .message > b { display: block; color: var(--muted); font-size: 12px; margin-bottom: 10px; }
@@ -10,6 +12,7 @@
 .experience .chat-panel .chat-composer { position: sticky; bottom: 0; z-index: 12; background: var(--cream); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin-top: 20px; padding: 12px 0; }
 .experience .chat-composer textarea { width: 100%; min-height: 48px; max-height: 120px; line-height: 1.5; resize: none; overflow-y: auto; overscroll-behavior: contain; }
 .experience .chat-composer button { min-height: 48px; font-size: 14px; white-space: nowrap; }
+.experience .chat-panel .chat-composer .chat-reply-shortcut { position: absolute; bottom: calc(100% + 8px); right: 0; min-height: 44px; max-width: 100%; padding: 8px 12px; border: 1px solid var(--ink); border-radius: 16px; background: var(--yellow); color: var(--ink); font-size: 14px; line-height: 1.4; white-space: normal; }
 .experience .chat-waiting { display: flex; align-items: center; gap: 10px; padding: 14px 0; font-size: 14px; color: var(--muted); }
 .chat-waiting-dot { flex-shrink: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--pink); animation: chat-pulse 1.6s ease-in-out infinite; }
 @keyframes chat-pulse { 50% { opacity: .35; } }
@@ -22,8 +25,9 @@
 .experience .chat-header-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
 .experience .chat-history-notice { font-size: 13px; color: var(--muted); }
 @media (max-width: 900px) {
-  .experience .chat-panel .chat-composer { position: fixed; left: 20px; right: 20px; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); margin: 0; box-shadow: 0 -10px 16px var(--cream); padding: 10px 0; }
+  .experience .chat-panel .chat-composer { position: fixed; left: 20px; right: 20px; bottom: var(--chat-navigation-space); margin: 0; box-shadow: 0 -10px 16px var(--cream); padding: 10px 0; }
   .chat-keyboard-open .experience .chat-panel .chat-composer { bottom: var(--chat-keyboard-inset, 0px); padding-bottom: 8px; }
+  .chat-keyboard-open .experience .chat-keyboard-space { display: block; height: calc(var(--chat-reply-space) + max(0px, var(--chat-keyboard-inset, 0px) - var(--chat-navigation-space))); }
   .chat-keyboard-open .experience .bottom-nav { display: none; }
   .experience .chat-panel .message { padding: 16px; }
 }

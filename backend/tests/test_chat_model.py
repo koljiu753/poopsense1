@@ -14,6 +14,13 @@ OWNER = {"X-Household-Key": "household-secret"}
 MESSAGES = [{"role": "user", "content": "请简短介绍你能做什么"}]
 
 
+@pytest.fixture(autouse=True)
+def close_model_pool():
+    agent.close_model_client()
+    yield
+    agent.close_model_client()
+
+
 def mock_provider(monkeypatch, *, content="可以帮你理解记录。", finish_reason="stop",
                   base_url="https://api.deepseek.com", max_tokens=1024):
     requests = []
@@ -30,7 +37,16 @@ def mock_provider(monkeypatch, *, content="可以帮你理解记录。", finish_
             }}],
         })
 
-    monkeypatch.setattr(agent.httpx, "post", post)
+    class FakeClient:
+        is_closed = False
+
+        def post(self, url, **kwargs):
+            return post(url, **kwargs)
+
+        def close(self):
+            self.is_closed = True
+
+    monkeypatch.setattr(agent, "_create_model_client", FakeClient)
     return requests
 
 

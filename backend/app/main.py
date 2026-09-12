@@ -47,7 +47,7 @@ from .service import (
     authorize_household, authorize_member_view, claim_session, create_assessment_version,
     grant_family_view, hash_secret, ingest, member_trend, revoke_family_view,
 )
-from .agent import analyze_session as agent_analyze_session, chat as agent_chat, resume_paused_chat
+from .agent import analyze_session as agent_analyze_session, chat as agent_chat, close_model_client, resume_paused_chat
 from .service import POLICY_VERSION
 from .memory import create_self_report, get_health_profile, list_memory, save_health_profile, update_memory
 from .inline_worker import inline_worker_loop, run_inline_worker_cycle, worker_runtime
@@ -213,12 +213,15 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        if worker_task is not None:
-            stop_event.set()
-            try:
-                await asyncio.wait_for(worker_task, timeout=5)
-            except TimeoutError:
-                worker_task.cancel()
+        try:
+            if worker_task is not None:
+                stop_event.set()
+                try:
+                    await asyncio.wait_for(worker_task, timeout=5)
+                except TimeoutError:
+                    worker_task.cancel()
+        finally:
+            close_model_client()
 
 
 app = FastAPI(title="PoopSense API", version="0.1.0", lifespan=lifespan)

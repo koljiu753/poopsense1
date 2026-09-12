@@ -320,6 +320,47 @@ beforeEach(() => {
 });
 
 describe("PoopSense core UI", () => {
+  it.each(["wheel", "PageUp", "editing"] as const)("preserves reading intent when a reply arrives after %s", async action => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    mocked.agentChat.mockClear();
+    let complete!: (value: typeof response) => void;
+    mocked.agentChat.mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    const originalScroll = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scroll = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: scroll });
+    try {
+      const user = userEvent.setup();
+      render(<App />);
+      const input = await screen.findByLabelText("描述你的情况");
+      await user.type(input, "先回答这个问题");
+      await user.click(screen.getByRole("button", { name: "发送 →" }));
+      await user.type(input, "还没发送的草稿");
+      scroll.mockClear();
+      if (action === "editing") await user.keyboard("{ArrowLeft}");
+      else await act(async () => {
+        window.dispatchEvent(action === "wheel" ? new WheelEvent("wheel", { deltaY: -200 })
+          : new KeyboardEvent("keydown", { key: "PageUp" }));
+      });
+      await act(async () => complete({ ...response, message: { ...response.message, content: "这是一条新收到的完整回答。" } }));
+      expect(await screen.findByText("这是一条新收到的完整回答。")).toBeVisible();
+      if (action === "editing") {
+        expect(scroll).toHaveBeenCalled();
+        expect(screen.queryByRole("button", { name: "查看刚收到的回答 ↓" })).not.toBeInTheDocument();
+      } else {
+        expect(scroll).not.toHaveBeenCalled();
+        await user.click(screen.getByRole("button", { name: "查看刚收到的回答 ↓" }));
+        expect(scroll).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole("button", { name: "查看刚收到的回答 ↓" })).not.toBeInTheDocument();
+      }
+      expect(input).toHaveValue("还没发送的草稿");
+      expect(mocked.agentChat).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalScroll) Object.defineProperty(Element.prototype, "scrollIntoView", originalScroll);
+      else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    }
+  });
+
   it.each(["success", "failure"] as const)("keeps an early manual question's %s visible instead of starting a pending automatic report", async outcome => {
     window.history.replaceState(null, "", "/#/report?member=m_001&record=ses_latest");
     mocked.sessions.mockResolvedValue([{

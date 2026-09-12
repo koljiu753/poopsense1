@@ -844,9 +844,20 @@ function AgentDoctor({
   const scrollToReply = () => { newestMessage.current?.scrollIntoView?.({ block: "start", behavior: "instant" }); setNewReply(false); };
   useEffect(() => {
     const pauseFollow = () => { followResponse.current = false; };
+    const pauseForKeyboardScroll = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (event.defaultPrevented || target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"].includes(event.key)
+        || (event.key === " " && !target?.closest("button, a[href], [role='button']"))) pauseFollow();
+    };
     window.addEventListener("wheel", pauseFollow, { passive: true });
     window.addEventListener("touchmove", pauseFollow, { passive: true });
-    return () => { window.removeEventListener("wheel", pauseFollow); window.removeEventListener("touchmove", pauseFollow); };
+    window.addEventListener("keydown", pauseForKeyboardScroll);
+    return () => {
+      window.removeEventListener("wheel", pauseFollow);
+      window.removeEventListener("touchmove", pauseFollow);
+      window.removeEventListener("keydown", pauseForKeyboardScroll);
+    };
   }, []);
   useLayoutEffect(() => {
     if (!messages.length || messages[messages.length - 1].historical) return;
@@ -1240,8 +1251,7 @@ function AgentDoctor({
             ) : <div key="current" className="messages" aria-live="polite">{content}</div>;
           })}
           {sending ? <ChatWaiting /> : null}
-          {newReply ? <button className="chat-jump" onClick={scrollToReply}>查看刚收到的回答 ↓</button> : null}
-          <ChatComposer sending={sending} onSend={text => void send(text)} />
+          <ChatComposer sending={sending} onSend={text => void send(text)} onViewReply={newReply ? scrollToReply : undefined} />
         </article>
       </div>
     </section>

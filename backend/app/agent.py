@@ -1,8 +1,13 @@
 import hashlib
 import json
+import logging
+import threading
+import time
 import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlsplit
 
 import httpx
@@ -29,6 +34,75 @@ CHAT_REPLY_FORMAT = (
     "段落之间空一行；不用大标题、表格、代码块或多层列表。"
     "用户明确要求详细时可适当展开。安全提醒和不确定性说明必须完整，优先于篇幅要求。"
 )
+
+
+def _configure_model_logging() -> logging.Logger:
+    model_logger = logging.getLogger(__name__)
+    model_logger.setLevel(logging.INFO)
+    # Uvicorn configures its own loggers, leaving the root logger at WARNING.
+    # Keep these whitelisted model metrics visible without enabling other logs.
+    model_logger.propagate = False
+    if not any(handler.get_name() == "poopsense_model_metrics" for handler in model_logger.handlers):
+        handler = logging.StreamHandler()
+        handler.set_name("poopsense_model_metrics")
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        model_logger.addHandler(handler)
+    return model_logger
+
+
+logger = _configure_model_logging()
+
+
+@dataclass
+class _ModelClientState:
+    client: httpx.Client
+    borrowers: int = 0
+    retired: bool = False
+
+
+_model_client_state: _ModelClientState | None = None
+_model_client_lock = threading.Lock()
+
+
+def _create_model_client() -> httpx.Client:
+    # Credentials, timeout and payload are supplied only on individual requests.
+    return httpx.Client(limits=httpx.Limits(
+        max_connections=100, max_keepalive_connections=20, keepalive_expiry=60,
+    ))
+
+
+@contextmanager
+def _borrow_model_client() -> Iterator[httpx.Client]:
+    global _model_client_state
+    with _model_client_lock:
+        if _model_client_state is None or _model_client_state.client.is_closed:
+            _model_client_state = _ModelClientState(_create_model_client())
+        state = _model_client_state
+        state.borrowers += 1
+    try:
+        # HTTPX Client supports concurrent requests; do not hold our lock over I/O.
+        yield state.client
+    finally:
+        with _model_client_lock:
+            state.borrowers -= 1
+            should_close = state.retired and state.borrowers == 0
+        if should_close:
+            state.client.close()
+
+
+def close_model_client() -> None:
+    """Retire the pool without interrupting a request already using it."""
+    global _model_client_state
+    with _model_client_lock:
+        state = _model_client_state
+        _model_client_state = None
+        if state is None:
+            return
+        state.retired = True
+        should_close = state.borrowers == 0
+    if should_close:
+        state.client.close()
 
 
 def parse_model_decision(raw: str) -> dict[str, Any]:
@@ -86,22 +160,26 @@ def safety_decision(message: str) -> tuple[str, list[str]]:
 
 def call_model(messages: list[dict[str, str]], *, max_tokens: int | None = None,
                disable_thinking: bool = False) -> str:
-    if not settings.llm_api_key:
-        raise HTTPException(status_code=503, detail={"code": "MODEL_NOT_CONFIGURED"})
+    request_settings = settings
+    started = time.perf_counter()
+    call_status = "MODEL_PROVIDER_FAILED"
     try:
+        if not request_settings.llm_api_key:
+            raise HTTPException(status_code=503, detail={"code": "MODEL_NOT_CONFIGURED"})
         payload: dict[str, Any] = {
-            "model": settings.llm_model, "messages": messages, "temperature": 0.2,
+            "model": request_settings.llm_model, "messages": messages, "temperature": 0.2,
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if disable_thinking:
             payload["thinking"] = {"type": "disabled"}
-        response = httpx.post(
-            f"{settings.llm_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            json=payload,
-            timeout=settings.llm_timeout_seconds,
-        )
+        with _borrow_model_client() as client:
+            response = client.post(
+                f"{request_settings.llm_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {request_settings.llm_api_key}"},
+                json=payload,
+                timeout=request_settings.llm_timeout_seconds,
+            )
         response.raise_for_status()
         choice = response.json()["choices"][0]
         if max_tokens is not None and choice.get("finish_reason") != "stop":
@@ -110,11 +188,25 @@ def call_model(messages: list[dict[str, str]], *, max_tokens: int | None = None,
         content = choice["message"]["content"]
         if max_tokens is not None and (not isinstance(content, str) or not content.strip()):
             raise HTTPException(status_code=502, detail={"code": "MODEL_EMPTY_RESPONSE"})
-        return content.strip()
-    except HTTPException:
+        reply = content.strip()
+        call_status = "succeeded"
+        return reply
+    except HTTPException as exc:
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+        if code in {"MODEL_NOT_CONFIGURED", "MODEL_RESPONSE_INCOMPLETE", "MODEL_EMPTY_RESPONSE"}:
+            call_status = code
         raise
     except Exception as exc:
+        if isinstance(exc, httpx.HTTPStatusError):
+            call_status = f"HTTP_{exc.response.status_code}"
         raise HTTPException(status_code=502, detail={"code": "MODEL_PROVIDER_FAILED"}) from exc
+    finally:
+        # Whitelist operational scalars; never log inputs, replies or exception text.
+        logger.info("model_call %s", json.dumps({
+            "model": request_settings.llm_model,
+            "status": call_status,
+            "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+        }, ensure_ascii=True))
 
 
 def call_chat_model(messages: list[dict[str, str]]) -> str:

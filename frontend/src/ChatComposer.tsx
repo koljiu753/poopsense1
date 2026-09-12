@@ -1,10 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /** Keep keystrokes local so typing never re-renders reports or long replies. */
-export default function ChatComposer({ sending, onSend }: { sending: boolean; onSend: (text: string) => void }) {
+export default function ChatComposer({ sending, onSend, onViewReply }: {
+  sending: boolean;
+  onSend: (text: string) => void;
+  onViewReply?: () => void;
+}) {
   const [draft, setDraft] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
   const form = useRef<HTMLFormElement>(null);
+  const keyboardSpace = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const field = input.current;
     if (!field) return;
@@ -31,7 +36,13 @@ export default function ChatComposer({ sending, onSend }: { sending: boolean; on
         if (!focused) baseline = window.innerHeight;
         heightsByWidth.set(viewportWidth, baseline);
         const keyboardOpen = focused && baseline - height > 100;
-        form.current?.style.setProperty("--chat-keyboard-inset", `${Math.max(0, window.innerHeight - height - offset)}px`);
+        const inset = `${Math.max(0, window.innerHeight - height - offset)}px`;
+        // The fixed composer moves above an overlay keyboard. Reserve the same
+        // extra space in the document so its last reply can still scroll clear.
+        for (const element of [form.current, keyboardSpace.current]) {
+          if (element && element.style.getPropertyValue("--chat-keyboard-inset") !== inset)
+            element.style.setProperty("--chat-keyboard-inset", inset);
+        }
         document.body.classList.toggle("chat-keyboard-open", keyboardOpen);
       });
     };
@@ -51,18 +62,19 @@ export default function ChatComposer({ sending, onSend }: { sending: boolean; on
       document.body.classList.remove("chat-keyboard-open");
     };
   }, []);
-  return <form ref={form} className="chat-composer" onSubmit={event => {
+  return <><div ref={keyboardSpace} className={`chat-keyboard-space${onViewReply ? " has-reply-shortcut" : ""}`} aria-hidden="true" /><form ref={form} className="chat-composer" onSubmit={event => {
     event.preventDefault();
     if (sending || !draft.trim()) return;
     onSend(draft.trim());
     setDraft("");
   }}>
+    {onViewReply ? <button type="button" className="chat-reply-shortcut" onClick={onViewReply}>查看刚收到的回答 ↓</button> : null}
     <label className="sr-only" htmlFor="doctor-message">描述你的情况</label>
     <textarea ref={input} id="doctor-message" rows={1} maxLength={4000} value={draft}
       onChange={event => setDraft(event.target.value)}
       placeholder={sending ? "可以先写下一条问题…" : "说说你的问题…"} />
     <button type="submit" disabled={!draft.trim() || sending}>{sending ? "等待回答" : "发送 →"}</button>
-  </form>;
+  </form></>;
 }
 
 export function ChatWaiting() {
