@@ -3,6 +3,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -22,6 +23,12 @@ from .skills import (
 
 
 RED_FLAG_WORDS = {"血便", "出血", "黑便", "剧痛", "昏厥", "意识异常", "高烧"}
+CHAT_REPLY_FORMAT = (
+    "手机阅读格式：首句直接回答当前问题，不重复自我介绍或复述背景。"
+    "默认用120至220个中文字，分成2至3个短段，每段最多2句；有行动建议时最多列3条。"
+    "段落之间空一行；不用大标题、表格、代码块或多层列表。"
+    "用户明确要求详细时可适当展开。安全提醒和不确定性说明必须完整，优先于篇幅要求。"
+)
 
 
 def parse_model_decision(raw: str) -> dict[str, Any]:
@@ -77,22 +84,47 @@ def safety_decision(message: str) -> tuple[str, list[str]]:
     return "health_education", ["explain", "ask_follow_up"]
 
 
-def call_model(messages: list[dict[str, str]]) -> str:
+def call_model(messages: list[dict[str, str]], *, max_tokens: int | None = None,
+               disable_thinking: bool = False) -> str:
     if not settings.llm_api_key:
         raise HTTPException(status_code=503, detail={"code": "MODEL_NOT_CONFIGURED"})
     try:
+        payload: dict[str, Any] = {
+            "model": settings.llm_model, "messages": messages, "temperature": 0.2,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if disable_thinking:
+            payload["thinking"] = {"type": "disabled"}
         response = httpx.post(
             f"{settings.llm_base_url.rstrip('/')}/chat/completions",
             headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            json={"model": settings.llm_model, "messages": messages, "temperature": 0.2},
+            json=payload,
             timeout=settings.llm_timeout_seconds,
         )
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+        choice = response.json()["choices"][0]
+        if max_tokens is not None and choice.get("finish_reason") != "stop":
+            # Never present a budget-truncated safety explanation as a complete reply.
+            raise HTTPException(status_code=502, detail={"code": "MODEL_RESPONSE_INCOMPLETE"})
+        content = choice["message"]["content"]
+        if max_tokens is not None and (not isinstance(content, str) or not content.strip()):
+            raise HTTPException(status_code=502, detail={"code": "MODEL_EMPTY_RESPONSE"})
+        return content.strip()
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"code": "MODEL_PROVIDER_FAILED"}) from exc
+
+
+def call_chat_model(messages: list[dict[str, str]]) -> str:
+    """Bound interactive replies without changing the background JSON planner."""
+    return call_model(
+        messages,
+        max_tokens=max(256, min(settings.llm_chat_max_tokens, 4096)),
+        # This provider extension must not leak into a custom OpenAI-compatible API.
+        disable_thinking=urlsplit(settings.llm_base_url).hostname == "api.deepseek.com",
+    )
 
 
 DIMENSION_LABELS = {"shape": "形状", "color": "颜色", "odor": "气味"}
@@ -227,7 +259,7 @@ def session_policy(report: dict[str, Any]) -> tuple[str, list[str], str, str]:
 
 
 def chat(db: Session, auth: AuthContext, member_id: str, text: str,
-         conversation_id: str | None = None, model_caller=call_model,
+         conversation_id: str | None = None, model_caller=call_chat_model,
          session_external_id: str | None = None) -> dict[str, Any]:
     basis = authorization_basis(db, auth, member_id)
     now = datetime.now(timezone.utc)
@@ -424,6 +456,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
         "你只能在 allowed_actions 内组织语言，不得诊断、改写风险等级、扩大接收人或执行未授权动作。"
         "若 decision=urgent_care，必须明确建议尽快线下就医；严重或紧急症状建议急诊。"
         "低质量或缺失数据必须明确说无法可靠判断。回答简洁、中文。\n"
+        f"{CHAT_REPLY_FORMAT}\n"
         "如果 current_session 存在，它是确定性规则生成的结构化报告；只补充易懂解释，不得改写其结论、建议类别或下一步。\n"
         f"安全上下文：{json.dumps(safe_context, ensure_ascii=False)}"
     )
@@ -483,7 +516,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
             ], "allowed_actions": allowed}
             try:
                 coach_reply = model_caller([
-                    {"role": "system", "content": "你是生活教练，只给低风险饮水、饮食、运动与作息行动，不诊断。只能使用以下最小上下文：" + json.dumps(coach_context, ensure_ascii=False)},
+                    {"role": "system", "content": "你是生活教练，只给低风险饮水、饮食、运动与作息行动，不诊断。" + CHAT_REPLY_FORMAT + "只能使用以下最小上下文：" + json.dumps(coach_context, ensure_ascii=False)},
                     {"role": "user", "content": text},
                 ])
             except HTTPException:
@@ -562,7 +595,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
 
 def analyze_session(db: Session, auth: AuthContext, member_id: str,
                     session_id: str, conversation_id: str | None = None,
-                    model_caller=call_model) -> dict[str, Any]:
+                    model_caller=call_chat_model) -> dict[str, Any]:
     return chat(
         db, auth, member_id,
         "新传感记录已到达。请自动完成本次分析并给出多方面行动建议。",
@@ -572,7 +605,7 @@ def analyze_session(db: Session, auth: AuthContext, member_id: str,
 
 
 def resume_paused_chat(db: Session, auth: AuthContext, run_id: str, confirmed: bool,
-                       model_caller=call_model) -> dict[str, Any]:
+                       model_caller=call_chat_model) -> dict[str, Any]:
     run = db.get(AgentRun, run_id)
     if not run or run.household_id != auth.household_id:
         raise HTTPException(status_code=404, detail={"code": "AGENT_RUN_NOT_FOUND"})
@@ -611,6 +644,7 @@ def resume_paused_chat(db: Session, auth: AuthContext, run_id: str, confirmed: b
             "你是家庭管家。用户已明确确认继续当前家庭事务。"
             "只解释下一步和所需信息，不得自行更改授权、归属或成员；"
             "真正的变更必须由后端受权工具执行。回答简洁、中文。"
+            f"{CHAT_REPLY_FORMAT}"
             f"\n任务：{run.goal}\n授权依据：{basis}"
         )
         try:

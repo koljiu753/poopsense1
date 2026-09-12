@@ -320,6 +320,89 @@ beforeEach(() => {
 });
 
 describe("PoopSense core UI", () => {
+  it.each(["success", "failure"] as const)("keeps an early manual question's %s visible instead of starting a pending automatic report", async outcome => {
+    window.history.replaceState(null, "", "/#/report?member=m_001&record=ses_latest");
+    mocked.sessions.mockResolvedValue([{
+      session_id: "ses_latest", occurred_at: "2026-08-29T12:30:00Z", assignment_version: 1,
+      assessment_status: "assessed", risk_level: "normal", message: "当前记录",
+    }]);
+    mocked.conversations.mockImplementation(() => new Promise(() => {}));
+    if (outcome === "failure") mocked.agentChat.mockRejectedValueOnce(new ApiError(502, "MODEL_RESPONSE_INCOMPLETE"));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "先回答这个问题");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    if (outcome === "failure") expect(await screen.findByRole("button", { name: "重试这条提问" })).toBeVisible();
+    else expect(await screen.findByText("请尽快联系线下医生；严重症状请立即寻求急诊帮助。")).toBeVisible();
+    expect(mocked.analyzeSession).not.toHaveBeenCalled();
+    expect(screen.getByText("先回答这个问题").closest("details")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "立即自动分析 →" }));
+    await waitFor(() => expect(mocked.analyzeSession).toHaveBeenCalledTimes(1));
+  });
+  it.each(["success", "failure"] as const)("starts a question without waiting for history and ignores its late %s", async outcome => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    let resolveHistory!: (value: never) => void;
+    let rejectHistory!: (error: Error) => void;
+    mocked.conversations.mockResolvedValue([{ conversation_id: "slow_old" }] as never);
+    mocked.conversation.mockImplementation(() => new Promise((resolve, reject) => { resolveHistory = resolve; rejectHistory = reject; }));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "新的提问");
+    expect(screen.getByText(/正在加载此前对话，也可以直接开始新的提问/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText("请尽快联系线下医生；严重症状请立即寻求急诊帮助。")).toBeVisible();
+    expect(mocked.agentChat).toHaveBeenCalledWith(expect.anything(), "m_001", "新的提问", undefined);
+    await act(async () => {
+      if (outcome === "success") resolveHistory({ conversation_id: "slow_old", messages: [{ role: "assistant", content: "不应该覆盖新问答的旧正文", message_id: 12 }] } as never);
+      else rejectHistory(new Error("old history failed"));
+    });
+    expect(screen.getByText("新的提问")).toBeVisible();
+    expect(screen.queryByText("不应该覆盖新问答的旧正文")).not.toBeInTheDocument();
+    expect(screen.queryByText(/历史对话暂时未加载/)).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("描述你的情况"), "第二个问题");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    await waitFor(() => expect(mocked.agentChat).toHaveBeenLastCalledWith(expect.anything(), "m_001", "第二个问题", "conv_1"));
+  });
+
+  it("does not let slow optional details block the next question or overwrite its result", async () => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    let rejectDetails!: (error: Error) => void;
+    mocked.agentRun.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectDetails = reject; }));
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    mocked.agentChat.mockClear();
+    mocked.agentChat.mockResolvedValueOnce({ ...response, message: { ...response.message, content: "第一条完整回答" } });
+    mocked.agentChat.mockResolvedValueOnce({ ...response, run_id: "new_run", message: { ...response.message, message_id: 88, content: "第二条完整回答" } });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "问题一");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText("第一条完整回答")).toBeVisible();
+    await user.type(screen.getByLabelText("描述你的情况"), "问题二");
+    expect(screen.getByRole("button", { name: "发送 →" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText("第二条完整回答")).toBeVisible();
+    await act(async () => rejectDetails(new ApiError(404, "OLD_RUN_MISSING")));
+    expect(screen.queryByText(/回复已生成，部分跟进信息暂时未加载/)).not.toBeInTheDocument();
+    expect(screen.getByText("第二条完整回答")).toBeVisible();
+    expect(mocked.agentChat).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a failed question without duplicating it or clearing the next draft", async () => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    mocked.agentChat.mockRejectedValueOnce(new ApiError(502, "MODEL_RESPONSE_INCOMPLETE"));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "第一次问题");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText(/这次回答没有完整生成/)).toBeVisible();
+    await user.type(screen.getByLabelText("描述你的情况"), "还没发出的下一条");
+    await user.click(screen.getByRole("button", { name: "重试这条提问" }));
+    expect(await screen.findByText("请尽快联系线下医生；严重症状请立即寻求急诊帮助。")).toBeVisible();
+    expect(screen.getAllByText("第一次问题")).toHaveLength(1);
+    expect(screen.getByLabelText("描述你的情况")).toHaveValue("还没发出的下一条");
+    expect(mocked.agentChat).toHaveBeenCalledTimes(2);
+  });
+
   it("claims a pending session only after a member is selected", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -700,7 +783,7 @@ describe("PoopSense core UI", () => {
     mocked.agentRun.mockImplementationOnce(() => new Promise((resolve, reject) => { finishDetails = resolve; failDetails = reject; }));
     await user.type(screen.getByLabelText("描述你的情况"), "这条建议该怎么理解？");
     await user.click(screen.getByRole("button", { name: "发送 →" }));
-    expect(screen.getByRole("button", { name: "思考中…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "等待回答" })).toBeDisabled();
     expect(report).toBeVisible();
     expect(choice).toHaveAttribute("aria-pressed", "true");
 
@@ -712,7 +795,8 @@ describe("PoopSense core UI", () => {
     expect(report).toBeVisible();
     expect(choice).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText("新的身体信号已到达")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "思考中…" })).toBeDisabled();
+    await user.type(screen.getByLabelText("描述你的情况"), "接着问");
+    expect(screen.getByRole("button", { name: "发送 →" })).toBeEnabled();
 
     await act(async () => {
       if (detailsOutcome === "success") finishDetails(run);
@@ -787,12 +871,14 @@ describe("PoopSense core UI", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(await screen.findByRole("button", { name: /了解如何开始/ }));
-    expect(await screen.findByText("此前保存的对话仍然在这里")).toBeInTheDocument();
+    expect(await screen.findByText("查看此前对话（1 条）")).toBeInTheDocument();
+    expect(screen.queryByText("此前保存的对话仍然在这里")).not.toBeInTheDocument();
     expect(screen.getByText(/部分状态或跟进信息暂时未加载/)).toBeInTheDocument();
     const history = document.querySelector("details.conversation-history")!;
     expect(history).not.toHaveAttribute("open");
     await user.click(screen.getByText("查看此前对话（1 条）"));
     expect(history).toHaveAttribute("open");
+    expect(await screen.findByText("此前保存的对话仍然在这里")).toBeVisible();
     expect(screen.getByText(/不代表本次检测结果/)).toBeVisible();
     await user.click(screen.getByText("查看此前对话（1 条）"));
     await user.type(screen.getByLabelText("描述你的情况"), "继续看看本次记录");
@@ -813,9 +899,8 @@ describe("PoopSense core UI", () => {
     await user.click(await screen.findByRole("button", { name: /了解如何开始/ }));
     const input = await screen.findByLabelText("描述你的情况");
     await user.type(input, "我先写下这个问题");
-    expect(screen.getByRole("button", { name: "正在加载对话…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "看看最近趋势" })).toBeDisabled();
-    await act(async () => { input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(screen.getByRole("button", { name: "发送 →" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "看看最近趋势" })).toBeEnabled();
     expect(mocked.agentChat).not.toHaveBeenCalled();
     await act(async () => {
       if (outcome === "success") complete({ conversation_id: "slow_history", messages: [] } as never);
@@ -837,6 +922,7 @@ describe("PoopSense core UI", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(await screen.findByRole("button", { name: /了解如何开始/ }));
+    await user.click(await screen.findByText("查看此前对话（1 条）"));
     expect(await screen.findByText("历史已就绪，不必等辅助查询")).toBeInTheDocument();
     await user.type(screen.getByLabelText("描述你的情况"), "新的问题");
     expect(screen.getByRole("button", { name: "发送 →" })).toBeEnabled();

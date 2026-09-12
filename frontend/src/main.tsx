@@ -6,6 +6,7 @@ import "./experience.css";
 import "./health-experience.css";
 import "./social-experience.css";
 import "./settings-experience.css";
+import "./chat-experience.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode><App /></React.StrictMode>,

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ComposeDialog from "./ComposeDialog";
 import NewRecordNotice from "./NewRecordNotice";
+import ChatMessageContent from "./ChatMessageContent";
+import ChatComposer, { ChatWaiting } from "./ChatComposer";
 import { useAppNavigation, type View, type HealthSection } from "./useAppNavigation";
 import { SensorSimulator } from "./SensorSimulator";
 import {
@@ -55,6 +57,8 @@ function loadConfig(): AppConfig {
   }
 }
 function friendlyError(error: unknown) {
+  if (error instanceof ApiError && ["MODEL_RESPONSE_INCOMPLETE", "MODEL_EMPTY_RESPONSE"].includes(error.message))
+    return "这次回答没有完整生成，请重试这条提问。";
   if (error instanceof ApiError && error.message === "REQUEST_TIMEOUT")
     return "等待服务响应超时，结果暂未确认。请先刷新查看是否已完成，再决定是否重试。";
   if (error instanceof ApiError && [401, 403].includes(error.status))
@@ -826,17 +830,29 @@ function AgentDoctor({
   onBack: () => void;
   onHistory: () => void;
 }) {
-  const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "doctor",
-      text: `你好，${name}。我是 PoopSense Agent 医生。我可以结合已认领记录解释身体信号，但不替代医生诊断。`,
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string>();
   const [historyReady, setHistoryReady] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [sending, setSending] = useState(false);
+  const [failedQuestion, setFailedQuestion] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyCount, setHistoryCount] = useState(20);
+  const [newReply, setNewReply] = useState(false);
+  const newestMessage = useRef<HTMLDivElement>(null);
+  const followResponse = useRef(false);
+  const scrollToReply = () => { newestMessage.current?.scrollIntoView?.({ block: "start", behavior: "instant" }); setNewReply(false); };
+  useEffect(() => {
+    const pauseFollow = () => { followResponse.current = false; };
+    window.addEventListener("wheel", pauseFollow, { passive: true });
+    window.addEventListener("touchmove", pauseFollow, { passive: true });
+    return () => { window.removeEventListener("wheel", pauseFollow); window.removeEventListener("touchmove", pauseFollow); };
+  }, []);
+  useLayoutEffect(() => {
+    if (!messages.length || messages[messages.length - 1].historical) return;
+    if (followResponse.current) scrollToReply();
+    else if (messages[messages.length - 1].role === "doctor") setNewReply(true);
+  }, [messages.length]);
   const sendBusy = useRef(false);
   const [failedSessionId, setFailedSessionId] = useState<string>();
   const [chatError, setChatError] = useState("");
@@ -882,14 +898,14 @@ function AgentDoctor({
     });
     api.conversations(config, memberId)
       .then(async (conversations) => {
-        if (!active) return;
+        if (!active || revision !== responseRevision.current) return;
         const latest = conversations[0];
         if (!latest) {
           setHistoryReady(true);
           return;
         }
         const history = await api.conversation(config, latest.conversation_id);
-        if (!active) return;
+        if (!active || revision !== responseRevision.current) return;
         setConversationId(history.conversation_id);
         const previousAnalysis = [...history.messages]
           .reverse()
@@ -920,23 +936,32 @@ function AgentDoctor({
         setHistoryReady(true);
       })
       .catch((caught) => {
-        if (active) {
+        if (active && revision === responseRevision.current) {
           setDetailWarning(`历史对话暂时未加载：${friendlyError(caught)}。本次分析仍可继续。`);
           setHistoryReady(true);
         }
       });
     return () => {
       active = false;
+      responseRevision.current += 1;
     };
   }, [config, memberId]);
   async function send(
-    text = draft,
+    text: string,
     options?: { session?: MemberSession; showUser?: boolean },
   ) {
     const clean = text.trim();
-    if ((!clean && !options?.session) || !memberId || !historyReady || sending || sendBusy.current) return;
+    if ((!clean && !options?.session) || !memberId || sending || sendBusy.current) return;
     sendBusy.current = true;
-    responseRevision.current += 1;
+    const revision = ++responseRevision.current;
+    const isCurrent = () => revision === responseRevision.current;
+    // If the user asks first, a still-pending automatic report must not fold
+    // that answer away or erase its retry state. The explicit report button remains.
+    if (!options?.session && autoSession) autoTriggeredSession.current = autoSession.session_id;
+    setHistoryReady(true);
+    setFailedQuestion("");
+    followResponse.current = !options?.session;
+    setNewReply(false);
     setFailedSessionId(undefined);
     if (options?.session) {
       setFeedbackError("");
@@ -949,7 +974,6 @@ function AgentDoctor({
     if (options?.showUser ?? !options?.session) {
       setMessages((current) => [...current, { role: "user", text: clean }]);
     }
-    setDraft("");
     setSending(true);
     setChatError("");
     setDetailWarning("");
@@ -959,6 +983,7 @@ function AgentDoctor({
             config, memberId, options.session.session_id, conversationId,
           )
         : await api.agentChat(config, memberId, clean, conversationId);
+      if (!isCurrent()) return;
       setConversationId(result.conversation_id);
       // Plain follow-up answers keep the record's report and saved response.
       if (result.report) {
@@ -975,10 +1000,11 @@ function AgentDoctor({
       }
       // Optional details must not discard a successfully received response.
       const detailFeedbackRevision = feedbackRevision.current;
-      const [followupResult, runResult] = await Promise.allSettled([
+      void Promise.allSettled([
         result.report?.followup_id ? api.actionFollowups(config, memberId) : Promise.resolve([]),
         api.agentRun(config, result.run_id),
-      ]);
+      ]).then(([followupResult, runResult]) => {
+      if (!isCurrent()) return;
       if (result.report && followupResult.status === "fulfilled" && detailFeedbackRevision === feedbackRevision.current) {
         setFollowup(followupResult.value.find((item) => item.followup_id === result.report?.followup_id) ?? null);
       }
@@ -986,16 +1012,18 @@ function AgentDoctor({
       if (followupResult.status === "rejected" || runResult.status === "rejected") {
         setDetailWarning("回复已生成，部分跟进信息暂时未加载。你可以继续阅读，稍后重新打开查看。");
       }
+      });
     } catch (caught) {
+      if (!isCurrent()) return;
       if (options?.session) setFailedSessionId(options.session.session_id);
+      else setFailedQuestion(clean);
       setChatError(
         caught instanceof ApiError && caught.message === "MODEL_NOT_CONFIGURED"
           ? "对话服务暂未连接。你仍可查看记录的基础报告，稍后再来提问。"
           : friendlyError(caught),
       );
     } finally {
-      sendBusy.current = false;
-      setSending(false);
+      if (isCurrent()) { sendBusy.current = false; setSending(false); }
     }
   }
   useEffect(() => {
@@ -1068,6 +1096,7 @@ function AgentDoctor({
           </span>
           {delegation ? <small className="delegation-status">{sending ? "正在调用" : "本次分析"} {delegation}</small> : null}
           </details>
+          {latestSession ? <div className="chat-header-actions"><button className="chat-jump" onClick={() => document.getElementById("doctor-message")?.focus()}>直接提问 ↓</button></div> : null}
         </div>
       </div>
       <div className="doctor-layout">
@@ -1161,36 +1190,38 @@ function AgentDoctor({
               ) : null}
             </details>
           ) : null}
-          {!latestSession && !analysisReport ? <div className="getting-started"><img src="/poopsense-mascot-pop-v1.webp" alt="" /><div><h2>先有记录，再慢慢了解</h2><p>回首页体验一次模拟检测，或到健康页确认待认领记录。收到结果后，会自动整理观察和建议。</p><button onClick={onBack}>回首页体验 →</button></div></div> : null}
+          {!latestSession && !analysisReport ? <div className="chat-start"><h2>有什么想了解的？</h2><p>可以直接提问。有了已认领记录后，也能一起看看变化。</p></div> : null}
           <div className="quick-prompts">
-            <span>对这次结果还有疑问？</span>
-            <button disabled={!historyReady || sending} onClick={() => void send("帮我看看最近趋势")}>
+            <span>{latestSession || analysisReport ? "对这次结果还有疑问？" : "也可以从这里开始"}</span>
+            <button disabled={sending} onClick={() => void send("帮我看看最近趋势")}>
               看看最近趋势
             </button>
-            <button disabled={!historyReady || sending} onClick={() => void send("最近有点便秘")}>
+            <button disabled={sending} onClick={() => void send("最近有点便秘")}>
               便秘怎么办
             </button>
-            <button disabled={!historyReady || sending} onClick={() => void send("出现血便怎么办")}>
+            <button disabled={sending} onClick={() => void send("出现血便怎么办")}>
               需要警惕什么
             </button>
-            <button disabled={!historyReady || sending} onClick={() => void send("请让健康医生和生活教练一起做综合分析")}>
+            <button disabled={sending} onClick={() => void send("请让健康医生和生活教练一起做综合分析")}>
               多专家综合分析
             </button>
           </div>
-          {!historyReady ? <p role="status">正在接回此前对话，你可以先输入，加载完成后再发送。</p> : null}
+          {!historyReady ? <p className="chat-history-notice" role="status">正在加载此前对话，也可以直接开始新的提问。</p> : null}
           {detailWarning && <p role="status">{detailWarning}</p>}
           {chatError && (
-            <p className="chat-error" role="alert">
+            <div className="chat-error" role="alert">
               {chatError}
-            </p>
+              {failedQuestion && <button className="chat-retry" disabled={sending} onClick={() => void send(failedQuestion, { showUser: false })}>重试这条提问</button>}
+            </div>
           )}
           {[true, false].map((historical) => {
             const group = messages.filter((message) => Boolean(message.historical) === historical);
             if (!group.length) return null;
-            const content = group.map((message, index) => (
-              <div key={index} className={`message ${message.role}`}>
+            const visible = historical ? group.slice(-historyCount) : group;
+            const content = (!historical || historyOpen) ? visible.map((message, index) => (
+              <div key={`${message.role}-${index}-${message.messageId ?? "draft"}`} ref={!historical && index === visible.length - 1 ? newestMessage : undefined} className={`message ${message.role}`}>
                 <b>{message.role === "doctor" ? "Agent 医生" : name}</b>
-                <p>{message.text}</p>
+                {message.role === "doctor" ? <ChatMessageContent text={message.text} /> : <p>{message.text}</p>}
                 {message.role === "doctor" && message.messageId ? (
                   <div className="message-feedback" aria-label="评价这条建议">
                     <button aria-pressed={message.feedback === "helpful"} onClick={() => void rateMessage(message.messageId!, "helpful")}>有帮助</button>
@@ -1198,34 +1229,19 @@ function AgentDoctor({
                   </div>
                 ) : null}
               </div>
-            ));
+            )) : null;
             return historical ? (
-              <details className="conversation-history" key="history">
+              <details className="conversation-history" key="history" onToggle={event => setHistoryOpen(event.currentTarget.open)}>
                 <summary>查看此前对话（{group.length} 条）</summary>
                 <p>以下是此前保存的对话，不代表本次检测结果；旧称谓也不表示真人医生审核。</p>
                 <div className="messages">{content}</div>
+                {historyOpen && group.length > historyCount ? <button onClick={() => setHistoryCount(count => count + 20)}>再看更早的 20 条</button> : null}
               </details>
             ) : <div key="current" className="messages" aria-live="polite">{content}</div>;
           })}
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void send();
-            }}
-          >
-            <label className="sr-only" htmlFor="doctor-message">
-              描述你的情况
-            </label>
-            <textarea
-              id="doctor-message"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="例如：最近两天有点偏硬，需要注意什么？"
-            />
-            <button disabled={!historyReady || !draft.trim() || sending}>
-              {!historyReady ? "正在加载对话…" : sending ? "思考中…" : "发送 →"}
-            </button>
-          </form>
+          {sending ? <ChatWaiting /> : null}
+          {newReply ? <button className="chat-jump" onClick={scrollToReply}>查看刚收到的回答 ↓</button> : null}
+          <ChatComposer sending={sending} onSend={text => void send(text)} />
         </article>
       </div>
     </section>

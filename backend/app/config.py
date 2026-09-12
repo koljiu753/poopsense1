@@ -71,6 +71,7 @@ class Settings:
     llm_base_url: str = os.getenv("POOPSENSE_LLM_BASE_URL", "https://api.deepseek.com")
     llm_model: str = os.getenv("POOPSENSE_LLM_MODEL", "deepseek-v4-pro")
     llm_timeout_seconds: float = float(os.getenv("POOPSENSE_LLM_TIMEOUT_SECONDS", "30"))
+    llm_chat_max_tokens: int = int(os.getenv("POOPSENSE_LLM_CHAT_MAX_TOKENS", "1024"))
     llm_proactive_enabled: bool = _env_flag("POOPSENSE_LLM_PROACTIVE_ENABLED", "true")
     # Historical competition integration, excluded from the sensor product.
     legacy_robot_enabled: bool = _env_flag("POOPSENSE_LEGACY_ROBOT_ENABLED", "false")
