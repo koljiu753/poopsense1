@@ -94,6 +94,8 @@ def test_default_medical_orchestration_queues_one_checkin_and_is_idempotent(clie
         assert action.result == {
             "reason": "policy_medical_provider",
             "message": "新记录已整理，可以打开报告查看本次观察并记录感受",
+            "model_route": {"mode": "single", "task": "structured_action", "source": "policy",
+                            "model": "policy-engine", "reason": "rule_action"},
         }
         dispatch = dispatches_for(db, action)
         assert len(dispatch) == 1

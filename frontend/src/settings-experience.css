@@ -292,6 +292,15 @@
 .experience .settings-page .agent-action-line b { font-size: 14px; }
 .experience .settings-page .agent-action-line small { color: var(--muted); font-size: 12px; }
 .experience .settings-page .agent-action-line em { border-width: 1px; border-radius: 5px; font-size: 11px; }
+.experience .settings-page .model-routing-overview { margin: 18px 0; padding: 16px; min-width: 0; background: var(--cream); border: 1px solid var(--line); border-radius: 8px; }
+.experience .settings-page .model-routing-overview h3 { margin: 0 0 8px; font-size: 17px; }
+.experience .settings-page .model-routing-overview p,
+.experience .settings-page .model-routing-overview > small { display: block; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.experience .settings-page .model-routing-overview dl { margin: 12px 0; }
+.experience .settings-page .model-routing-overview dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.experience .settings-page .model-routing-overview dt { font-size: 14px; font-weight: 700; }
+.experience .settings-page .model-routing-overview dd { min-width: 0; margin: 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.experience .settings-page .model-routing-overview dd small { display: block; color: var(--muted); font-size: 12px; }
 .experience .settings-page .advanced-settings { max-width: none; margin-top: 30px; padding: 8px 0; border-top: 1px solid var(--line); color: var(--muted); }
 .experience .settings-page .advanced-settings > summary { color: var(--muted); font-size: 13px; font-weight: 600; }
 .experience .settings-page .advanced-settings .form-card { max-width: 650px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: white; box-shadow: none; }

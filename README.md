@@ -10,7 +10,9 @@ PoopSense 是面向家庭一般成员的马桶侧传感设备与 AI 助手项目
 
 ## 在线演示
 
-[打开PoopSense](https://poopsense-reader-0912.vercel.app/) · [百川接入发布说明](docs/releases/2026-09-13-baichuan.md)
+[打开PoopSense](https://poopsense-reader-0912.vercel.app/) · [多模型接入与路由](docs/model-routing.md) · [此前百川接入记录](docs/releases/2026-09-13-baichuan.md)
+
+本次代码新增按问题自动选模与本地接入助手：DeepSeek处理日常和记录解释，百川M3-Plus处理健康知识，单次传感报告与后台动作继续由规则处理。回答显示自身的实际来源，设置只读展示模型分工；旧记录不会随当前配置改名。公网发布状态见多模型说明末节。下文保留此前单百川上线的验证记录。
 
 2026-09-13已将实际公网后端更新为百川M3-Plus问答，原手机入口保持不变。公网一次虚构问答约5.76秒显示两段正文并恢复发送，320/390宽无横溢出；这是单次样本，不能保证固定时延、医学准确性或真实微信兼容性。
 

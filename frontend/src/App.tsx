@@ -12,6 +12,7 @@ import {
   type AgentAction as AgentActionRecord,
   type AgentConnection,
   type AgentMemory,
+  type AgentMessage,
   type AgentProfile,
   type AgentProfileRevision,
   type AgentRun,
@@ -25,6 +26,7 @@ import {
   type InboxItem,
   type Member,
   type MemberSession,
+  type ModelRoute,
   type PetSnapshot,
   type RawDataAuthorization,
   type Trend,
@@ -57,6 +59,10 @@ function loadConfig(): AppConfig {
   }
 }
 function friendlyError(error: unknown) {
+  if (error instanceof ApiError && error.message === "MODEL_NOT_CONFIGURED")
+    return "这类问题的模型暂未配置。你仍可查看记录的基础报告，稍后再来提问。";
+  if (error instanceof ApiError && error.message === "MODEL_ROUTING_CONFIG_INVALID")
+    return "对话服务的模型配置需要维护，请稍后再试。已保存的记录仍可查看。";
   if (error instanceof ApiError && ["MODEL_RESPONSE_INCOMPLETE", "MODEL_EMPTY_RESPONSE"].includes(error.message))
     return "这次回答没有完整生成，请重试这条提问。";
   if (error instanceof ApiError && error.message === "REQUEST_TIMEOUT")
@@ -812,7 +818,64 @@ type ChatMessage = {
   text: string;
   messageId?: number;
   feedback?: "helpful" | "not_helpful";
+  source?: AnswerSource;
 };
+
+type AnswerSource = {
+  modelVersion?: string;
+  route?: ModelRoute;
+};
+
+function answerSource(message: AgentMessage, currentResponseVersion?: string): AnswerSource | undefined {
+  const modelVersion = message.model_version ?? currentResponseVersion;
+  const route = message.metadata?.model_route;
+  return modelVersion || route ? { modelVersion: modelVersion || undefined, route } : undefined;
+}
+
+function modelTaskLabel(task: string) {
+  return ({
+    general_chat: "日常问答", product_help: "使用帮助", record_explanation: "记录解读",
+    health_knowledge: "健康知识", urgent_care: "紧急安全提醒", weekly_summary: "每周总结",
+    session_report: "传感报告", structured_action: "行动安排",
+  } as Record<string, string>)[task] ?? "本次问题";
+}
+
+function modelReasonLabel(reason?: string) {
+  return ({
+    task_route: "根据问题类型选择相应模型。",
+    single_model: "使用当前配置的模型。",
+    rule_report: "传感报告依据规则核对后的事实和建议生成。",
+    rule_action: "行动安排按允许的规则处理。",
+    provider_error: "模型调用未完成，保留了可用的处理结果。",
+    output_guard: "未通过检查的模型内容未采用。",
+    mixed_steps: "不同处理步骤分别完成后汇总。",
+    inherited_followup: "沿用这次追问所属的问题类型。",
+  } as Record<string, string>)[reason ?? ""] ?? "按本次问题与可用配置完成处理。";
+}
+
+function AnswerSourceDetails({ source, label = "回答来源" }: { source?: AnswerSource; label?: string }) {
+  if (!source) return null;
+  const { route, modelVersion } = source;
+  const model = modelVersion ?? route?.model;
+  const policy = route?.source === "policy" || (!route && (model === "policy-engine" || model === "deterministic-tool-v1"));
+  const modelCount = new Set(route?.models_used?.map(item => `${item.provider}:${item.model}`)).size;
+  const summary = route?.source === "mixed" ? (modelCount > 1 ? "多模型与规则共同整理" : "模型与规则共同整理")
+    : policy ? "规则生成" : model ? `本次模型：${model}` : "模型生成";
+  return <div className="answer-source" role="group" aria-label={label}>
+    <span className="answer-source-label">{summary}</span>
+    {route ? <details>
+      <summary>来源详情</summary>
+      <p>{modelTaskLabel(route.task)} · {route.mode === "auto" ? "按问题自动选择" : "使用预设分工"}</p>
+      <p>{modelReasonLabel(route.reason)}</p>
+      {!!route.models_used?.length && <ul aria-label="本次已完成的模型调用">
+        {route.models_used.map((item, index) => <li key={`${item.provider}:${item.model}:${item.task}:${index}`}>
+          {modelTaskLabel(item.task)}：{item.model}
+        </li>)}
+      </ul>}
+    </details> : null}
+  </div>;
+}
+
 function AgentDoctor({
   config,
   memberId,
@@ -871,6 +934,7 @@ function AgentDoctor({
   const [delegation, setDelegation] = useState("");
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null);
   const [analysisReport, setAnalysisReport] = useState<AgentAnalysisReport | null>(null);
+  const [reportSource, setReportSource] = useState<AnswerSource>();
   const [followup, setFollowup] = useState<HealthActionFollowup | null>(null);
   const [savingFollowup, setSavingFollowup] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
@@ -883,6 +947,7 @@ function AgentDoctor({
     const revision = ++responseRevision.current;
     const initialFeedbackRevision = feedbackRevision.current;
     setAnalysisReport(null);
+    setReportSource(undefined);
     setFollowup(null);
     setHistoryReady(false);
     setConversationId(undefined);
@@ -924,6 +989,7 @@ function AgentDoctor({
         if (previousAnalysis?.metadata?.report) {
           const restoredReport = previousAnalysis.metadata.report;
           setAnalysisReport(restoredReport);
+          setReportSource(answerSource(previousAnalysis));
           void followupsPromise.then((followups) => {
             if (!active || revision !== responseRevision.current || initialFeedbackRevision !== feedbackRevision.current) return;
             const restoredFollowup = followups.find(
@@ -942,6 +1008,7 @@ function AgentDoctor({
             role: item.role === "assistant" ? "doctor" : "user",
             text: item.content,
             messageId: item.role === "assistant" ? item.message_id : undefined,
+            source: item.role === "assistant" ? answerSource(item) : undefined,
           })),
         );
         setHistoryReady(true);
@@ -978,6 +1045,7 @@ function AgentDoctor({
       setFeedbackError("");
       setMessages((current) => current.map((message) => ({ ...message, historical: true })));
       setAnalysisReport(null);
+      setReportSource(undefined);
       setFollowup(null);
       setAgentRun(null);
       setDelegation("");
@@ -999,6 +1067,7 @@ function AgentDoctor({
       // Plain follow-up answers keep the record's report and saved response.
       if (result.report) {
         setAnalysisReport(result.report);
+        setReportSource(answerSource(result.message, result.model_version));
         setFollowup(null);
       }
       setDelegation(`${agentRoleLabel(result.delegated_agent)} · ${skillLabel(result.skill)}`);
@@ -1006,7 +1075,8 @@ function AgentDoctor({
       if (!result.report) {
         setMessages((current) => [
           ...current,
-          { role: "doctor", text: result.message.content, messageId: result.message.message_id },
+          { role: "doctor", text: result.message.content, messageId: result.message.message_id,
+            source: answerSource(result.message, result.model_version) },
         ]);
       }
       // Optional details must not discard a successfully received response.
@@ -1028,11 +1098,7 @@ function AgentDoctor({
       if (!isCurrent()) return;
       if (options?.session) setFailedSessionId(options.session.session_id);
       else setFailedQuestion(clean);
-      setChatError(
-        caught instanceof ApiError && caught.message === "MODEL_NOT_CONFIGURED"
-          ? "对话服务暂未连接。你仍可查看记录的基础报告，稍后再来提问。"
-          : friendlyError(caught),
-      );
+      setChatError(friendlyError(caught));
     } finally {
       if (isCurrent()) { sendBusy.current = false; setSending(false); }
     }
@@ -1057,7 +1123,8 @@ function AgentDoctor({
       setAgentRun(result.run);
       setMessages((current) => [
         ...current,
-        { role: "doctor", text: result.message.content, messageId: result.message.message_id },
+        { role: "doctor", text: result.message.content, messageId: result.message.message_id,
+          source: answerSource(result.message) },
       ]);
     } catch (caught) {
       setChatError(friendlyError(caught));
@@ -1099,11 +1166,14 @@ function AgentDoctor({
         <div>
           <h1>{autoSession || analysisReport ? "本次分析报告" : "聊聊你的记录"}</h1>
           <p className="report-record-context">{name}{latestSession ? ` · ${new Date(latestSession.occurred_at).toLocaleString("zh-CN", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : " · 还没有已认领记录"}</p>
+          {agentStatus?.routing?.mode === "auto" && <p className="model-routing-note">按问题自动选择</p>}
           <details className="assistant-connection"><summary>健康参考 · 自动生成，非医疗诊断</summary><span>
             <i />{" "}
             {agentStatus?.configured
-              ? "健康助手在线"
-              : agentStatus ? "基础建议可用 · AI 对话未连接" : "正在确认对话服务状态"}
+              ? "AI 对话已配置"
+              : agentStatus?.routing?.routes.some(route => route.source === "model" && route.configured)
+                ? "部分问题的模型待配置 · 可在“我的”查看分工"
+                : agentStatus ? "基础建议可用 · AI 对话未配置" : "正在读取对话服务配置"}
           </span>
           {delegation ? <small className="delegation-status">{sending ? "正在调用" : "本次分析"} {delegation}</small> : null}
           </details>
@@ -1162,6 +1232,7 @@ function AgentDoctor({
             </section>
           ) : null}
           {analysisReport ? (
+            <>
             <AnalysisReport
               report={analysisReport}
               session={latestSession}
@@ -1170,6 +1241,8 @@ function AgentDoctor({
               feedbackError={feedbackError} onHistory={onHistory}
               onUpdateFollowup={(update) => void updateCurrentFollowup(update)}
             />
+            <AnswerSourceDetails source={reportSource} label="报告来源" />
+            </>
           ) : null}
           {agentRun ? (
             <details className="agent-run-trace">
@@ -1233,6 +1306,7 @@ function AgentDoctor({
               <div key={`${message.role}-${index}-${message.messageId ?? "draft"}`} ref={!historical && index === visible.length - 1 ? newestMessage : undefined} className={`message ${message.role}`}>
                 <b>{message.role === "doctor" ? "Agent 医生" : name}</b>
                 {message.role === "doctor" ? <ChatMessageContent text={message.text} /> : <p>{message.text}</p>}
+                {message.role === "doctor" && <AnswerSourceDetails source={message.source} />}
                 {message.role === "doctor" && message.messageId ? (
                   <div className="message-feedback" aria-label="评价这条建议">
                     <button aria-pressed={message.feedback === "helpful"} onClick={() => void rateMessage(message.messageId!, "helpful")}>有帮助</button>
@@ -2816,15 +2890,29 @@ function Settings({
           <details className="settings-fold">
             <summary>
           <span className="sticker">AGENT</span>
-          <h2>Agent 活动</h2><small>连接状态与活动记录</small></summary>
+          <h2>Agent 活动</h2><small>模型配置与活动记录</small></summary>
             <div className="settings-fold-body">
           <p className="privacy-note">
-            {agentStatus?.configured
-              ? `${agentStatus.model} 已连接`
-              : "模型未连接"}{" "}
+            {agentStatus?.routing?.mode === "auto" ? "按问题自动选择" : agentStatus?.configured
+              ? `${agentStatus.model} 已配置`
+              : agentStatus ? "模型未配置" : "正在读取模型配置"}{" "}
             ·{" "}
             {agentStatus?.proactive_enabled ? "主动调度开启" : "主动调度未运行"}
           </p>
+          {agentStatus?.routing && <section className="model-routing-overview" aria-label="模型分工">
+            <h3>模型分工</h3>
+            <p>按问题使用以下分工；实际来源会显示在每条回答下方。</p>
+            <dl>
+              {agentStatus.routing.routes.map((route) => <div key={route.task}>
+                <dt>{route.label || modelTaskLabel(route.task)}</dt>
+                <dd>{route.source === "policy" ? "规则处理" : <>
+                  <span>{route.model || "模型待设置"}</span>
+                  <small>{route.configured ? "已配置" : "未配置"}</small>
+                </>}</dd>
+              </div>)}
+            </dl>
+            <small>配置状态不代表服务实时连通；模型接口与密钥由服务端管理。</small>
+          </section>}
           {agentActions.length ? (
             agentActions.slice(0, 5).map((action) => (
               <div className="agent-action-line" key={action.action_id}>

@@ -24,6 +24,14 @@
 .experience .chat-jump, .experience .chat-retry { min-height: 44px; border: 1px solid var(--line); border-radius: 16px; padding: 8px 14px; background: var(--yellow); }
 .experience .chat-header-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
 .experience .chat-history-notice { font-size: 13px; color: var(--muted); }
+.experience .model-routing-note { margin: 6px 0; color: var(--blue); font-size: 13px; line-height: 1.6; }
+.experience .chat-panel .answer-source { min-width: 0; margin-top: 12px; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.experience .answer-source-label { display: block; }
+.experience .answer-source summary { width: fit-content; max-width: 100%; min-height: 44px; padding: 11px 0; color: var(--blue); cursor: pointer; }
+.experience .answer-source summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
+.experience .chat-panel .answer-source p { margin: 0 0 6px; font-size: 13px; line-height: 1.6; }
+.experience .answer-source ul { margin: 8px 0; padding-left: 20px; }
+.experience .answer-source li { margin: 4px 0; }
 @media (max-width: 900px) {
   .experience .chat-panel .chat-composer { position: fixed; left: 20px; right: 20px; bottom: var(--chat-navigation-space); margin: 0; box-shadow: 0 -10px 16px var(--cream); padding: 10px 0; }
   .chat-keyboard-open .experience .chat-panel .chat-composer { bottom: var(--chat-keyboard-inset, 0px); padding-bottom: 8px; }

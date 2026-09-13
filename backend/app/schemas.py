@@ -246,6 +246,7 @@ class AgentMessageResult(BaseModel):
     role: str
     content: str
     created_at: datetime
+    model_version: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -371,6 +372,7 @@ class AgentConversationSummary(BaseModel):
 
 
 class AgentStatusResult(BaseModel):
+    routing: dict[str, Any] | None = None
     provider: str
     model: str
     configured: bool

@@ -319,6 +319,175 @@ beforeEach(() => {
   mocked.agentConnections.mockResolvedValue([]);
 });
 
+describe("model routing provenance", () => {
+  it.each([
+    ["MODEL_NOT_CONFIGURED", "这类问题的模型暂未配置。你仍可查看记录的基础报告，稍后再来提问。"],
+    ["MODEL_ROUTING_CONFIG_INVALID", "对话服务的模型配置需要维护，请稍后再试。已保存的记录仍可查看。"],
+  ])("explains the routing failure %s and preserves the question for retry", async (code, explanation) => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    mocked.agentChat.mockRejectedValueOnce(new ApiError(503, code));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "颜色通常表示什么");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText(explanation)).toBeVisible();
+    expect(screen.queryByText(code)).not.toBeInTheDocument();
+    expect(screen.getByText("颜色通常表示什么")).toBeVisible();
+    expect(screen.getByRole("button", { name: "重试这条提问" })).toBeEnabled();
+  });
+
+  it.each([true, false])("shows the actual answer model immediately with message version present=%s", async hasMessageVersion => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    const status = await mocked.agentStatus.getMockImplementation()!(null as never);
+    mocked.agentStatus.mockResolvedValue({ ...status, model: "current-default-model", routing: { mode: "auto", profiles: [], routes: [] } });
+    mocked.agentChat.mockResolvedValue({ ...response, model_version: "response-model", message: {
+      ...response.message, content: "这是本次完整回复。", model_version: hasMessageVersion ? "message-model" : undefined,
+      metadata: { model_route: { mode: "auto", task: "product_help", source: "model", reason: "task_route" } },
+    } });
+    mocked.agentRun.mockImplementation(() => new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "如何开始使用");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText("这是本次完整回复。")).toBeVisible();
+    const source = screen.getByRole("group", { name: "回答来源" });
+    expect(within(source).getByText(`本次模型：${hasMessageVersion ? "message-model" : "response-model"}`)).toBeVisible();
+    expect(source).not.toHaveTextContent("current-default-model");
+    expect(screen.getByRole("button", { name: "发送 →" })).not.toHaveTextContent("等待回答");
+    await user.click(within(source).getByText("来源详情"));
+    expect(within(source).getByText("使用帮助 · 按问题自动选择")).toBeVisible();
+    expect(within(source).getByText("根据问题类型选择相应模型。")).toBeVisible();
+    expect(source).not.toHaveTextContent("task_route");
+  });
+
+  it("restores each saved model and leaves legacy messages without a guessed source", async () => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    const status = await mocked.agentStatus.getMockImplementation()!(null as never);
+    mocked.agentStatus.mockResolvedValue({ ...status, model: "new-current-model" });
+    mocked.conversations.mockResolvedValue([{ conversation_id: "saved_sources", member_id: "m_001", updated_at: "2026-09-13T00:00:00Z" }]);
+    mocked.conversation.mockResolvedValue({ conversation_id: "saved_sources", member_id: "m_001", messages: [
+      { message_id: 10, role: "assistant", content: "旧模型保存的回答。", created_at: "2026-09-12T00:00:00Z", model_version: "saved-model" },
+      { message_id: 11, role: "assistant", content: "这条安全提醒来自规则。", created_at: "2026-09-12T00:00:01Z", model_version: "policy-engine" },
+      { message_id: 12, role: "assistant", content: "旧版本没有保存模型信息。", created_at: "2026-09-12T00:00:02Z" },
+    ] });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText("查看此前对话（3 条）"));
+    const saved = screen.getByText("旧模型保存的回答。").closest(".message") as HTMLElement;
+    const policy = screen.getByText("这条安全提醒来自规则。").closest(".message") as HTMLElement;
+    const legacy = screen.getByText("旧版本没有保存模型信息。").closest(".message") as HTMLElement;
+    expect(within(saved).getByText("本次模型：saved-model")).toBeVisible();
+    expect(within(policy).getByText("规则生成")).toBeVisible();
+    expect(within(legacy).queryByRole("group", { name: "回答来源" })).not.toBeInTheDocument();
+    expect(saved).not.toHaveTextContent("new-current-model");
+    expect(policy).not.toHaveTextContent("new-current-model");
+  });
+
+  it.each([true, false])("identifies mixed processing without crediting the whole answer to one model, multiple=%s", async multiple => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    mocked.agentChat.mockResolvedValue({ ...response, model_version: "last-model", message: {
+      ...response.message, content: "已整理多方面说明。", model_version: "mixed",
+      metadata: { model_route: { mode: "auto", task: "health_knowledge", source: "mixed", reason: "mixed_steps", models_used: [
+        ...(multiple ? [{ provider: "deepseek", model: "deepseek-v4-pro", task: "general_chat" }] : []),
+        { provider: "baichuan", model: "Baichuan-M3-Plus", task: "health_knowledge" },
+      ] } },
+    } });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "请综合解释");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    const source = await screen.findByRole("group", { name: "回答来源" });
+    expect(within(source).getByText(multiple ? "多模型与规则共同整理" : "模型与规则共同整理")).toBeVisible();
+    expect(source).not.toHaveTextContent("本次模型：");
+    await user.click(within(source).getByText("来源详情"));
+    if (multiple) expect(within(source).getByText("日常问答：deepseek-v4-pro")).toBeVisible();
+    else expect(source).not.toHaveTextContent("deepseek-v4-pro");
+    expect(within(source).getByText("健康知识：Baichuan-M3-Plus")).toBeVisible();
+    expect(within(source).getByText("不同处理步骤分别完成后汇总。")).toBeVisible();
+    expect(source).not.toHaveTextContent("mixed_steps");
+  });
+
+  it.each(["output_guard", "future_reason"])("labels a guarded result as policy and maps the reason %s", async reason => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    mocked.agentChat.mockResolvedValue({ ...response, model_version: "policy-engine", message: {
+      ...response.message, content: "请先查看安全提醒。", model_version: "policy-engine",
+      metadata: { model_route: { mode: "auto", task: reason === "output_guard" ? "urgent_care" : "future_task", source: "policy", model: "configured-but-not-used", reason } },
+    } });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "如何理解安全提醒");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    const source = await screen.findByRole("group", { name: "回答来源" });
+    expect(within(source).getByText("规则生成")).toBeVisible();
+    expect(source).not.toHaveTextContent("configured-but-not-used");
+    await user.click(within(source).getByText("来源详情"));
+    expect(within(source).getByText(reason === "output_guard" ? "未通过检查的模型内容未采用。" : "按本次问题与可用配置完成处理。")).toBeVisible();
+    expect(source).not.toHaveTextContent(reason);
+    expect(source).not.toHaveTextContent("future_task");
+  });
+
+  it("keeps the report provenance when a later question uses a different model", async () => {
+    window.history.replaceState(null, "", "/#/report?member=m_001&record=ses_latest");
+    mocked.sessions.mockResolvedValue([{ session_id: "ses_latest", occurred_at: "2026-09-13T00:00:00Z", assignment_version: 1, assessment_status: "assessed", risk_level: "normal", message: "这是一条已归属记录。" }]);
+    const analysis = await mocked.analyzeSession.getMockImplementation()!(null as never, "m_001", "ses_latest");
+    mocked.analyzeSession.mockResolvedValue({ ...analysis, model_version: "policy-engine", message: {
+      ...analysis.message, model_version: "policy-engine", metadata: { model_route: { mode: "auto", task: "session_report", source: "policy", reason: "rule_report" } },
+    } });
+    const reply = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    mocked.agentChat.mockResolvedValue({ ...reply, model_version: "Baichuan-M3-Plus", message: { ...reply.message, content: "这是对建议的补充说明。", model_version: "Baichuan-M3-Plus" } });
+    const user = userEvent.setup();
+    render(<App />);
+    const reportSource = await screen.findByRole("group", { name: "报告来源" });
+    expect(within(reportSource).getByText("规则生成")).toBeVisible();
+    await user.type(screen.getByLabelText("描述你的情况"), "请补充解释");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText("这是对建议的补充说明。")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "回答来源" })).getByText("本次模型：Baichuan-M3-Plus")).toBeVisible();
+    expect(reportSource).toHaveTextContent("规则生成");
+    expect(reportSource).not.toHaveTextContent("Baichuan-M3-Plus");
+    expect(mocked.analyzeSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows read-only task routing and configuration without claiming connectivity", async () => {
+    const status = await mocked.agentStatus.getMockImplementation()!(null as never);
+    mocked.agentStatus.mockResolvedValue({ ...status, configured: false, routing: {
+      mode: "auto",
+      profiles: [{ id: "general", provider: "deepseek", model: "deepseek-v4-pro", configured: true }, { id: "medical", provider: "baichuan", model: "Baichuan-M3-Plus", configured: false }],
+      routes: [
+        { task: "general_chat", label: "日常问答", source: "model", provider: "deepseek", model: "deepseek-v4-pro", configured: true },
+        { task: "health_knowledge", label: "健康知识", source: "model", provider: "baichuan", model: "Baichuan-M3-Plus", configured: false },
+        { task: "session_report", label: "传感报告", source: "policy", configured: true },
+      ],
+    } });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click((await screen.findAllByRole("button", { name: /我的$/ }))[0]);
+    await user.click(await screen.findByRole("heading", { name: "Agent 活动" }));
+    const routing = await screen.findByRole("region", { name: "模型分工" });
+    const activity = routing.closest("article") as HTMLElement;
+    expect(within(activity).getByText(/按问题自动选择/)).toBeVisible();
+    expect(within(routing).getByText("deepseek-v4-pro").closest("dd")).toHaveTextContent("已配置");
+    expect(within(routing).getByText("Baichuan-M3-Plus").closest("dd")).toHaveTextContent("未配置");
+    expect(within(routing).getByText("规则处理")).toBeVisible();
+    expect(activity).not.toHaveTextContent("已连接");
+    expect(within(routing).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(routing).queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("keeps single-model status compatible with the older API", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click((await screen.findAllByRole("button", { name: /我的$/ }))[0]);
+    await user.click(await screen.findByRole("heading", { name: "Agent 活动" }));
+    expect(await screen.findByText(/deepseek-v4-pro 已配置/)).toBeVisible();
+    expect(screen.queryByText(/deepseek-v4-pro 已连接/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "模型分工" })).not.toBeInTheDocument();
+  });
+});
+
 describe("PoopSense core UI", () => {
   it.each(["wheel", "PageUp", "editing"] as const)("preserves reading intent when a reply arrives after %s", async action => {
     window.history.replaceState(null, "", "/#/chat?member=m_001");
@@ -1390,7 +1559,8 @@ describe("PoopSense core UI", () => {
     mocked.agentRun.mockResolvedValueOnce(pausedRun);
     mocked.resumeAgentRun.mockResolvedValue({
       run: { ...pausedRun, status: "completed", steps: pausedRun.steps.map((step) => ({ ...step, status: "succeeded" })) },
-      message: { message_id: 4, role: "assistant", content: "确认已收到。", created_at: "2026-08-28T00:00:01Z" },
+      message: { message_id: 4, role: "assistant", content: "确认已收到。", created_at: "2026-08-28T00:00:01Z", model_version: "policy-engine",
+        metadata: { model_route: { mode: "auto", task: "structured_action", source: "policy", reason: "rule_action" } } },
     });
     render(<App />);
     await user.click(await screen.findByRole("button", { name: /了解如何开始/ }));
@@ -1399,6 +1569,9 @@ describe("PoopSense core UI", () => {
     await user.click(await screen.findByRole("button", { name: "确认继续" }));
     expect(mocked.resumeAgentRun).toHaveBeenCalledWith(expect.anything(), "run_1", true);
     expect(await screen.findByText("确认已收到。")).toBeInTheDocument();
+    const resumed = screen.getByText("确认已收到。").closest(".message") as HTMLElement;
+    expect(within(resumed).getByText("规则生成")).toBeVisible();
+    expect(resumed).not.toHaveTextContent("deepseek-v4-pro");
   });
 
   it("keeps pet check-ins separate from health facts and supports a daily check-in", async () => {

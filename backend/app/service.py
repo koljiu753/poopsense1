@@ -247,7 +247,7 @@ def claim_session(db: Session, record: SessionRecord, claim: ClaimInput):
     )])
     db.flush()
     queue_redline_actions(db, record, replacement)
-    if settings.llm_proactive_enabled and settings.llm_api_key:
+    if settings.llm_proactive_enabled and (settings.llm_api_key or settings.llm_routing_enabled):
         now = datetime.now(timezone.utc)
         orchestration_key = f"agent.orchestrate:{record.id}:{replacement.version}"
         if not db.scalar(select(OutboxEvent).where(OutboxEvent.idempotency_key == orchestration_key)):

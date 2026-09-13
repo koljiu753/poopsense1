@@ -72,6 +72,9 @@ class Settings:
     llm_model: str = os.getenv("POOPSENSE_LLM_MODEL", "deepseek-v4-pro")
     llm_timeout_seconds: float = float(os.getenv("POOPSENSE_LLM_TIMEOUT_SECONDS", "30"))
     llm_chat_max_tokens: int = int(os.getenv("POOPSENSE_LLM_CHAT_MAX_TOKENS", "1024"))
+    llm_routing_enabled: bool = _env_flag("POOPSENSE_LLM_ROUTING_ENABLED", "false")
+    llm_profiles_json: str = os.getenv("POOPSENSE_LLM_PROFILES", "{}")
+    llm_routes_json: str = os.getenv("POOPSENSE_LLM_ROUTES", "{}")
     llm_proactive_enabled: bool = _env_flag("POOPSENSE_LLM_PROACTIVE_ENABLED", "true")
     # Historical competition integration, excluded from the sensor product.
     legacy_robot_enabled: bool = _env_flag("POOPSENSE_LEGACY_ROBOT_ENABLED", "false")
@@ -138,7 +141,7 @@ class Settings:
             blockers.append("http_worker_requires_external_worker")
         if self.http_worker_enabled and not self.worker_token:
             blockers.append("worker_token_required")
-        if self.llm_proactive_enabled and not self.llm_api_key:
+        if self.llm_proactive_enabled and not self.llm_api_key and not self.llm_routing_enabled:
             blockers.append("llm_key_required_for_proactive_agent")
         # This release still ships a shared browser credential, not an individual
         # login/session lifecycle. Infrastructure flags cannot certify that gap.

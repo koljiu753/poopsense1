@@ -49,6 +49,7 @@ from .service import (
 )
 from .agent import analyze_session as agent_analyze_session, chat as agent_chat, close_model_client, resume_paused_chat
 from .model_provider import provider_name
+from .model_routing import resolve_model, routing_status
 from .service import POLICY_VERSION
 from .memory import create_self_report, get_health_profile, list_memory, save_health_profile, update_memory
 from .inline_worker import inline_worker_loop, run_inline_worker_cycle, worker_runtime
@@ -274,7 +275,15 @@ def health():
 def ready(db: Session = Depends(get_db)):
     """Report runtime readiness and production gaps without exposing secrets."""
     db.execute(select(1)).scalar_one()
-    blockers = settings.production_blockers()
+    blockers = list(settings.production_blockers())
+    try:
+        route_status = routing_status(settings)
+        agent_configured = all(row["configured"] for row in route_status["routes"])
+        if not agent_configured:
+            blockers.append("model_route_not_configured")
+    except ValueError:
+        agent_configured = False
+        blockers.append("model_routing_config_invalid")
     return {
         "status": "ready",
         "app_env": settings.app_env,
@@ -283,9 +292,9 @@ def ready(db: Session = Depends(get_db)):
         "production_ready": not blockers,
         "production_blockers": list(blockers),
         "schema_strategy": "auto_create" if settings.auto_create_schema else "migrations",
-        "agent_configured": bool(settings.llm_api_key),
+        "agent_configured": agent_configured,
         "proactive_enabled": bool(
-            settings.llm_api_key and settings.llm_proactive_enabled
+            (settings.llm_api_key or settings.llm_routing_enabled) and settings.llm_proactive_enabled
         ),
         "worker_strategy": settings.worker_strategy,
         "http_worker_enabled": settings.http_worker_enabled,
@@ -752,7 +761,8 @@ def chat_with_agent(household_id: str, payload: AgentChatInput,
     return AgentChatResult(
         conversation_id=result["conversation"].id,
         message=AgentMessageResult(message_id=message.id, role=message.role, content=message.content,
-                                   created_at=message.created_at, metadata=message.message_metadata),
+                                   created_at=message.created_at, metadata=message.message_metadata,
+                                   model_version=message.model_version),
         decision=result["decision"], allowed_actions=result["allowed_actions"],
         authorization_basis=result["authorization_basis"], policy_version=message.policy_version,
         model_version=message.model_version,
@@ -777,7 +787,7 @@ def analyze_sensor_session(household_id: str, payload: AgentSessionAnalysisInput
         conversation_id=result["conversation"].id,
         message=AgentMessageResult(
             message_id=message.id, role=message.role, content=message.content,
-            created_at=message.created_at, metadata=message.message_metadata,
+            created_at=message.created_at, metadata=message.message_metadata, model_version=message.model_version,
         ),
         decision=result["decision"], allowed_actions=result["allowed_actions"],
         authorization_basis=result["authorization_basis"],
@@ -848,7 +858,8 @@ def resume_agent_run(household_id: str, run_id: str, payload: AgentResumeInput,
     return AgentResumeResult(
         run=run_view,
         message=AgentMessageResult(message_id=message.id, role=message.role, content=message.content,
-                                   created_at=message.created_at),
+                                   created_at=message.created_at, metadata=message.message_metadata,
+                                   model_version=message.model_version),
     )
 
 
@@ -856,10 +867,15 @@ def resume_agent_run(household_id: str, run_id: str, payload: AgentResumeInput,
 def agent_status(household_id: str, x_household_key: str = Header(...),
                  db: Session = Depends(get_db)):
     authorize_household(db, household_id, x_household_key)
+    try:
+        routes = routing_status(settings)
+        default_model = resolve_model("general_chat", settings)
+    except ValueError:
+        raise HTTPException(status_code=503, detail={"code": "MODEL_ROUTING_CONFIG_INVALID"}) from None
     return AgentStatusResult(
-        provider=provider_name(settings.llm_base_url), model=settings.llm_model,
-        configured=bool(settings.llm_api_key),
-        proactive_enabled=settings.llm_proactive_enabled and bool(settings.llm_api_key),
+        provider=default_model.provider, model=default_model.model, routing=routes,
+        configured=all(row["configured"] for row in routes["routes"]),
+        proactive_enabled=settings.llm_proactive_enabled and bool(settings.llm_api_key or settings.llm_routing_enabled),
         policy_version=POLICY_VERSION,
         worker_enabled=settings.inline_worker_enabled,
         worker_running=worker_runtime.running,
@@ -1220,7 +1236,7 @@ def conversation_history(household_id: str, conversation_id: str,
     return AgentConversationResult(
         conversation_id=conversation.id, member_id=conversation.subject_member_id,
         messages=[AgentMessageResult(message_id=m.id, role=m.role, content=m.content, created_at=m.created_at,
-                                     metadata=m.message_metadata)
+                                     metadata=m.message_metadata, model_version=m.model_version)
                   for m in messages],
     )
 

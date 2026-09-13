@@ -106,14 +106,37 @@ export type Grant = {
   granted_at: string;
   revoked_at: string | null;
 };
+export type ModelRoute = {
+  mode: "auto" | "single";
+  task: string;
+  source: "model" | "policy" | "mixed";
+  provider?: string;
+  model?: string;
+  reason?: string;
+  models_used?: Array<{ provider: string; model: string; task: string }>;
+};
+export type ModelRouting = {
+  mode: "auto" | "single";
+  profiles: Array<{ id: string; provider: string; model: string; configured: boolean }>;
+  routes: Array<{
+    task: string;
+    label: string;
+    source: "model" | "policy";
+    provider?: string;
+    model?: string;
+    configured: boolean;
+  }>;
+};
 export type AgentMessage = {
   message_id: number;
   role: "user" | "assistant" | "event";
   content: string;
   created_at: string;
+  model_version?: string | null;
   metadata?: {
     report?: AgentAnalysisReport | null;
     allowed_actions?: string[];
+    model_route?: ModelRoute;
     [key: string]: unknown;
   };
 };
@@ -289,6 +312,7 @@ export type AgentStatus = {
   provider: string;
   model: string;
   configured: boolean;
+  routing?: ModelRouting;
   proactive_enabled: boolean;
   policy_version: string;
   worker_enabled: boolean;

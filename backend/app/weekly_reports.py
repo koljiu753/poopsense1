@@ -2,10 +2,11 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .agent import REPORT_EXPLANATION_RULES, call_chat_model, validate_report_explanation
+from .agent import REPORT_EXPLANATION_RULES, call_chat_model, policy_route, reply_route, validate_report_explanation
 from .config import settings
 from .memory import authorize_memory_edit
 from .models import AgentAction, UserNotification, WeeklyHealthReport
@@ -47,6 +48,7 @@ def generate(db: Session, auth: AuthContext, member_id: str, model_caller=call_c
              "consecutive_abnormal": trend["consecutive_abnormal"],
              "dimensions": trend["dimensions"]}
     insufficient = trend["insufficient_coverage"] or trend["valid_sessions"] < 3
+    route = policy_route("weekly_summary", "rule_report")
     if insufficient:
         summary = "本周可靠样本不足，暂不做趋势判断。继续积累记录后再回看。"
         recommendations = ["保持自然记录，不必为凑数据改变生活习惯"]
@@ -55,9 +57,9 @@ def generate(db: Session, auth: AuthContext, member_id: str, model_caller=call_c
         recommendations = ["保持规律饮水与作息", "如连续异常或不适加重，请咨询医生"]
         summary = f"本周有 {trend['valid_sessions']} 次可靠记录，每周频率约 {trend['frequency_per_week']:.1f} 次。"
         model_version = "policy-engine"
-        if settings.llm_api_key:
+        if settings.llm_api_key or settings.llm_routing_enabled:
             try:
-                explanation = model_caller([
+                messages = [
                     {"role": "system", "content": (
                         "只解释给定周报事实和已有建议，不诊断、不新增事实，80字内中文。"
                         "current_session 表示本次规则周报。记录次数和每周频率是观察事实，"
@@ -68,16 +70,19 @@ def generate(db: Session, auth: AuthContext, member_id: str, model_caller=call_c
                         "current_session": {"facts": facts, "recommendations": recommendations},
                         "baseline_progress": trend.get("baseline_progress", {}),
                     }, ensure_ascii=False)},
-                ])
+                ]
+                explanation = call_chat_model(messages, task="weekly_summary") if model_caller is call_chat_model else model_caller(messages)
                 # The shared quantity guard also needs the deterministic observed
                 # frequency. This validation context does not add a user recommendation.
                 validate_report_explanation(explanation, {
                     "recommendations": [*recommendations, summary],
                 }, trend)
                 summary = explanation
-                model_version = settings.llm_model
-            except Exception:
-                pass
+                route = reply_route(explanation, "weekly_summary")
+                model_version = route["model"]
+            except Exception as exc:
+                guarded = isinstance(exc, HTTPException) and exc.detail == {"code": "MODEL_REPORT_CONTRADICTION"}
+                route = policy_route("weekly_summary", "output_guard" if guarded else "provider_error")
     now = datetime.now(timezone.utc)
     row = WeeklyHealthReport(
         id=f"weekly_{uuid.uuid4().hex}", household_id=auth.household_id,
@@ -92,7 +97,7 @@ def generate(db: Session, auth: AuthContext, member_id: str, model_caller=call_c
         action_type="weekly_report_ready", status="succeeded", recipient_id=auth.user_id,
         authorization_basis="authorized_weekly_report_generation", policy_version=POLICY_VERSION,
         model_version=model_version, input_summary={"period_start": start.isoformat()},
-        result={"report_id": row.id}, idempotency_key=f"weekly-report:{auth.household_id}:{member_id}:{start}",
+        result={"report_id": row.id, "model_route": route}, idempotency_key=f"weekly-report:{auth.household_id}:{member_id}:{start}",
         created_at=now, processed_at=now,
     )
     db.add(action); db.flush()

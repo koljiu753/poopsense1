@@ -1,5 +1,11 @@
 # PoopSense Backend
 
+## 多模型接入与自动选模（2026-09-13）
+
+根目录`配置模型.ps1`提供本地交互接入和连接检查；`enable-auto`开启按任务选模。DeepSeek处理日常、产品、记录解释及周报，百川M3-Plus处理健康知识，单次传感报告和后台动作继续使用规则。各请求使用独立配置快照，缺配置或调用失败不跨供应商重试。详细配置、扩展边界和验证说明见[多模型接入与路由](../docs/model-routing.md)。
+
+状态接口的`routing`仅含公开模型分工和配置状态；`AgentMessageResult.model_version`与`metadata.model_route`保存本次实际来源，包含立即回复、历史读取和恢复回复。密钥仅保存在服务端环境，不从共享演示网页修改。旧单模型配置仍兼容，关闭`POOPSENSE_LLM_ROUTING_ENABLED`可恢复它；自动模式不会把旧DeepSeek默认密钥误继承给百川。
+
 ## 当前传感器产品范围（2026-09-07）
 
 机械臂、机器狗、取水/递水仅保留为历史比赛模块。默认 `POOPSENSE_LEGACY_ROBOT_ENABLED=false`，所有 `/api/v1/households/{household_id}/robot/*` 接口返回 404，不连接执行设备。只有显式开启历史模块才能访问旧接口；当前 Agent 策略和前端不再提供执行建议或入口，即使开启旧接口也不恢复产品入口。机器人 SDK、轨迹和历史测试保留，不属于当前产品验收。部署前不得在有运动任务运行时切换开关，应先安全停止任务。
