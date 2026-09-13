@@ -74,6 +74,7 @@ POOPSENSE_LLM_ROUTES={"health_knowledge":"extra_model"}
 
 ## 本轮验证（2026-09-13）
 
+- 最终后端333/333、前端113/113通过，TypeScript与生产构建通过；[代码提交的GitHub检查](https://github.com/koljiu753/poopsense1/actions/runs/34746627070)已成功。后端测试隔离数据库并阻断真实网络及本地密钥读取；模拟检查不代表微信真机或医学验收。
 - 定向模拟测试：路由相关 84 项、应用集成 8 项、接入助手 19 项已分别通过。还覆盖失败重试保持供应商、实际模型别名审计，以及阻止将 DeepSeek 备用密钥继承给其他供应商。助手测试使用虚构密钥、临时文件和 MockTransport，没有读取真实密钥或发送真实请求。
 - 主代理本地真实调用记录：DeepSeek 一次 3.604 秒，百川两次分别 8.336 秒、12.226 秒；单次规则报告 0.051 秒、模型调用 0 次。
 
@@ -81,4 +82,8 @@ POOPSENSE_LLM_ROUTES={"health_knowledge":"extra_model"}
 
 ## 发布状态
 
-本轮多模型自动路由的公网发布仍在进行，尚未在本文确认上线。最终部署、提交、CI 和公网验收状态由发布负责人完成检查后更新。
+源码提交[`074c445`](https://github.com/koljiu753/poopsense1/commit/074c445f770ade2fe13fc13d084830cf3160ca55)已推送main，前后端已重新发布。[原问答入口](https://poopsense-reader-0912.vercel.app/#/chat?member=m_001)保持不变；“我的”页面可查看模型分工。
+
+后端部署`dpl_FrFejEt2tpyLeGXNKrKaNig9Bin1`、前端部署`dpl_4AND7tUSQqZeD7RumeqEDhoHUXpF`均为READY。公网HTTP200，JS/CSS与本地最终构建哈希一致，状态接口确认自动模式、两家已配置、8类任务分工；服务端分别保存两家密钥，未写入前端或GitHub。生产与预览配置已同步，本地文件也已配置，原有本地进程未主动重启。
+
+公网仍是共用虚构数据和临时SQLite，worker关闭、`production_ready=false`。独立身份、持久数据库与微信真机验证仍未完成；历史回执保存在记录中，不代表演示数据库跨实例或重启后永久保留。
