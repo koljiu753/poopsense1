@@ -456,6 +456,13 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
          conversation_id: str | None = None, model_caller=call_chat_model,
          session_external_id: str | None = None) -> dict[str, Any]:
     basis = authorization_basis(db, auth, member_id)
+    conversation = db.get(AgentConversation, conversation_id) if conversation_id is not None else None
+    if conversation_id is not None and conversation is None:
+        raise HTTPException(status_code=409, detail={"code": "CONVERSATION_EXPIRED"})
+    if conversation and (conversation.household_id != auth.household_id or
+                         conversation.created_by_user_id != auth.user_id or
+                         conversation.subject_member_id != member_id):
+        raise HTTPException(status_code=403, detail={"code": "CONVERSATION_ACCESS_DENIED"})
     now = datetime.now(timezone.utc)
     session_record: SessionRecord | None = None
     session_report: dict[str, Any] | None = None
@@ -506,11 +513,6 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
                     "skill": cached["skill"], "skill_version": cached["skill_version"],
                     "run": run, "report": session_report,
                 }
-    conversation = db.get(AgentConversation, conversation_id) if conversation_id else None
-    if conversation and (conversation.household_id != auth.household_id or
-                         conversation.created_by_user_id != auth.user_id or
-                         conversation.subject_member_id != member_id):
-        raise HTTPException(status_code=403, detail={"code": "CONVERSATION_ACCESS_DENIED"})
     if not conversation:
         conversation = AgentConversation(
             id=f"conv_{uuid.uuid4().hex}", household_id=auth.household_id,

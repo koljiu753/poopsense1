@@ -59,6 +59,8 @@ function loadConfig(): AppConfig {
   }
 }
 function friendlyError(error: unknown) {
+  if (error instanceof ApiError && error.message === "CONVERSATION_EXPIRED")
+    return "上次会话已失效，这条提问还未处理。原问题和草稿已保留；你可以选择在新对话中重试。";
   if (error instanceof ApiError && error.message === "MODEL_NOT_CONFIGURED")
     return "这类问题的模型暂未配置。你仍可查看记录的基础报告，稍后再来提问。";
   if (error instanceof ApiError && error.message === "MODEL_ROUTING_CONFIG_INVALID")
@@ -96,6 +98,8 @@ export default function App() {
   function setView(next: View) { navigate({ view: next }); }
   const currentView = useRef(view);
   currentView.current = view;
+  const currentDirectChat = useRef(view === "doctor" && route.chat);
+  currentDirectChat.current = view === "doctor" && route.chat;
   const [visitedViews, setVisitedViews] = useState<ReadonlySet<View>>(new Set(["home"]));
   useEffect(() => { setVisitedViews(previous => previous.has(view) ? previous : new Set([...previous, view])); }, [view]);
   const healthSection = route.section;
@@ -231,7 +235,7 @@ export default function App() {
         nextSessions.forEach(item => observedSessions.current.add(item.session_id));
         if (newest && isNew) {
           lastObservedSession.current = newest.session_id;
-          if (!hasPendingResults.current && ["home", "doctor", "result"].includes(currentView.current)) {
+          if (!hasPendingResults.current && !currentDirectChat.current && ["home", "doctor", "result"].includes(currentView.current)) {
             setPendingResults(current => current.filter(item => item.session_id !== newest.session_id));
             navigate({ view: "result", sessionId: newest.session_id }, { replace: ["doctor", "result"].includes(currentView.current) });
           } else setPendingResults(current => [...current, ...newRecords.filter(item => !current.some(record => record.session_id === item.session_id))]);
@@ -356,7 +360,7 @@ export default function App() {
           </span>
         </header>
         <main className={view === "home" ? "home-main" : undefined}>
-          {pendingResult && view !== "doctor" && view !== "result" && <NewRecordNotice memberName={selectedName} pendingCount={pendingResults.length} occurredAt={pendingResult.occurred_at} simulated={Boolean(pendingResult.simulated)} urgent={pendingResult.risk_level === "redline"} onOpen={openPendingResult} onDismiss={() => setPendingResults(current => current.filter(item => item.session_id !== pendingResult.session_id))} />}
+          {pendingResult && (view !== "doctor" || route.chat) && view !== "result" && <NewRecordNotice memberName={selectedName} pendingCount={pendingResults.length} occurredAt={pendingResult.occurred_at} simulated={Boolean(pendingResult.simulated)} urgent={pendingResult.risk_level === "redline"} onOpen={openPendingResult} onDismiss={() => setPendingResults(current => current.filter(item => item.session_id !== pendingResult.session_id))} />}
           {error && (
             <div className="alert" role="alert">
               <span>!</span>
@@ -899,6 +903,7 @@ function AgentDoctor({
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [sending, setSending] = useState(false);
   const [failedQuestion, setFailedQuestion] = useState("");
+  const [conversationExpired, setConversationExpired] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyCount, setHistoryCount] = useState(20);
   const [newReply, setNewReply] = useState(false);
@@ -951,6 +956,7 @@ function AgentDoctor({
     setFollowup(null);
     setHistoryReady(false);
     setConversationId(undefined);
+    setConversationExpired(false);
     setMessages([]);
     setAgentStatus(null);
     setAgentRun(null);
@@ -1026,7 +1032,7 @@ function AgentDoctor({
   }, [config, memberId]);
   async function send(
     text: string,
-    options?: { session?: MemberSession; showUser?: boolean },
+    options?: { session?: MemberSession; showUser?: boolean; newConversation?: boolean },
   ) {
     const clean = text.trim();
     if ((!clean && !options?.session) || !memberId || sending || sendBusy.current) return;
@@ -1038,6 +1044,9 @@ function AgentDoctor({
     if (!options?.session && autoSession) autoTriggeredSession.current = autoSession.session_id;
     setHistoryReady(true);
     setFailedQuestion("");
+    setConversationExpired(false);
+    const requestConversationId = options?.newConversation ? undefined : conversationId;
+    if (options?.newConversation) setConversationId(undefined);
     followResponse.current = !options?.session;
     setNewReply(false);
     setFailedSessionId(undefined);
@@ -1059,9 +1068,9 @@ function AgentDoctor({
     try {
       const result = options?.session
         ? await api.analyzeSession(
-            config, memberId, options.session.session_id, conversationId,
+            config, memberId, options.session.session_id, requestConversationId,
           )
-        : await api.agentChat(config, memberId, clean, conversationId);
+        : await api.agentChat(config, memberId, clean, requestConversationId);
       if (!isCurrent()) return;
       setConversationId(result.conversation_id);
       // Plain follow-up answers keep the record's report and saved response.
@@ -1098,6 +1107,7 @@ function AgentDoctor({
       if (!isCurrent()) return;
       if (options?.session) setFailedSessionId(options.session.session_id);
       else setFailedQuestion(clean);
+      setConversationExpired(caught instanceof ApiError && caught.message === "CONVERSATION_EXPIRED");
       setChatError(friendlyError(caught));
     } finally {
       if (isCurrent()) { sendBusy.current = false; setSending(false); }
@@ -1223,10 +1233,10 @@ function AgentDoctor({
                   disabled={!historyReady}
                   onClick={() => void send(
                     sessionAdvicePrompt(latestSession),
-                    { session: latestSession, showUser: false },
+                    { session: latestSession, showUser: false, newConversation: conversationExpired && failedSessionId === latestSession.session_id },
                   )}
                 >
-                  {failedSessionId === latestSession.session_id ? "重新生成本次报告" : "立即自动分析 →"}
+                  {failedSessionId === latestSession.session_id ? conversationExpired ? "在新对话中重试" : "重新生成本次报告" : "立即自动分析 →"}
                 </button>
               ) : null}
             </section>
@@ -1295,7 +1305,7 @@ function AgentDoctor({
           {chatError && (
             <div className="chat-error" role="alert">
               {chatError}
-              {failedQuestion && <button className="chat-retry" disabled={sending} onClick={() => void send(failedQuestion, { showUser: false })}>重试这条提问</button>}
+              {failedQuestion && <button className="chat-retry" disabled={sending} onClick={() => void send(failedQuestion, { showUser: false, newConversation: conversationExpired })}>{conversationExpired ? "在新对话中重试" : "重试这条提问"}</button>}
             </div>
           )}
           {[true, false].map((historical) => {

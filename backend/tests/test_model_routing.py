@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.model_routing import classify_task, resolve_model, routing_status
+from app.model_routing import classify_task, is_household_management_request, resolve_model, routing_status
 
 
 def settings(**updates):
@@ -215,3 +215,36 @@ def test_single_mode_status_reflects_existing_report_and_action_implementation(b
 ])
 def test_task_classification_priorities_and_bounded_followups(message, decision, skill, previous, expected):
     assert classify_task(message, decision, skill, previous) == expected
+
+
+@pytest.mark.parametrize("message,management,expected", [
+    ("一般健康知识：膳食纤维如何帮助肠道保持规律？请用简短要点回答，不引用成员数据，不提供个性化诊断。", False, "health_knowledge"),
+    ("家庭成员应该了解哪些肠道健康常识？", False, "health_knowledge"),
+    ("不需要读取成员数据，请解释家庭常见的膳食纤维来源", False, "health_knowledge"),
+    ("解释肠道健康，不要管理家庭成员", False, "health_knowledge"),
+    ("如何添加便秘的成员", True, "product_help"),
+    ("怎么切换家庭成员查看排便记录", True, "product_help"),
+    ("帮我看看家庭成员授权", True, "product_help"),
+    ("帮我管理家庭授权", True, "product_help"),
+    ("家庭有哪些功能？", True, "product_help"),
+    ("家庭空间怎么用", True, "product_help"),
+    ("帮我管理家庭成员", True, "product_help"),
+    ("如何管理家庭成员的健康", False, "health_knowledge"),
+    ("家庭成员饮食中如何加入膳食纤维", False, "health_knowledge"),
+    ("如何认领这次记录", True, "product_help"),
+    ("家庭成员都在，说个笑话吧", False, "general_chat"),
+])
+def test_family_words_do_not_override_the_actual_question(message, management, expected):
+    assert is_household_management_request(message) is management
+    # A stale household skill hint must not redirect a knowledge question.
+    assert classify_task(message, "health_education", "manage_household") == expected
+
+
+@pytest.mark.parametrize("message", [
+    "帮我授权", "开启授权", "关闭授权", "撤回授权", "确认归属",
+    "纠正归属", "添加成员", "删除成员", "邀请成员", "修改家庭成员归属",
+])
+def test_existing_household_action_phrases_keep_their_product_route(message):
+    assert is_household_management_request(message)
+    assert classify_task(message, "health_education", "manage_household") == "product_help"
+    assert classify_task(message, "urgent_care", "urgent_care") == "urgent_care"

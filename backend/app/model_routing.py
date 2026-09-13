@@ -230,19 +230,55 @@ def routing_status(settings: Any, *, environ: Mapping[str, str] | None = None) -
             "routes": result}
 
 
+def is_household_management_request(message: str) -> bool:
+    """Recognize product operations, not incidental references to a family."""
+    for clause in re.split(r"[，,。；;！？!?\n]", message):
+        clause = clause.strip()
+        # Context exclusions such as "不要引用成员数据" are not commands to
+        # invoke household tools. Actual operations in another clause remain.
+        if re.match(r"^(?:请)?(?:不要|不用|不需(?:要)?|无需|不必|不)(?:引用|使用|读取|查看|访问|获取|请求|申请|管理|修改|添加|删除|授权|认领)", clause):
+            continue
+        # Keep every existing confirmation-triggering action on the household
+        # skill path; otherwise changing intent classification skips its gate.
+        if any(term in clause for term in (
+            "帮我授权", "开启授权", "关闭授权", "撤回授权", "确认归属",
+            "纠正归属", "添加成员", "删除成员", "邀请成员",
+        )):
+            return True
+        if any(term in clause for term in (
+            "成员管理", "家庭管理", "成员列表", "成员授权", "家庭授权", "授权管理", "授权状态",
+            "成员权限", "家庭权限", "记录认领", "认领记录", "家庭设置", "家庭空间", "家庭页面", "家庭功能",
+        )):
+            return True
+        member_action = r"(?:添加|新增|创建|邀请|加入|退出|删除|移除|切换|绑定|解绑)"
+        member_target = r"(?:家庭|成员|家人)"
+        if (re.search(member_action + r".{0,12}" + member_target, clause)
+                or re.search(member_target + r"(?:怎么|如何|可以|能否|能不能|该|要|应该|需要|被|已|已经){0,3}" + member_action, clause)
+                or re.search(r"(?:管理|编辑|修改)(?:我的|我们的|这个|当前)?(?:家庭成员|家庭|成员)(?:$|(?:的)?(?:授权|权限|归属|设置|列表|信息|资料|账号|名称|昵称|关系))", clause)):
+            return True
+        access_action = r"(?:怎么|如何|哪里|能否|可以|帮我|查看|看看|管理|修改|设置|撤销|撤回|取消|授予|申请|开启|关闭|确认|纠正)"
+        access_target = r"(?:授权|权限|认领|归属)"
+        if (re.search(access_action + r".{0,12}" + access_target, clause)
+                or re.search(access_target + r".{0,12}" + access_action, clause)
+                or re.fullmatch(r"(?:请|帮我)?(?:授权|认领)(?:一下)?", clause)
+                or re.search(r"家庭.{0,6}(?:功能|设置|页面|入口|选项)", clause)):
+            return True
+    return False
+
+
 def classify_task(message: str, decision: str, skill: str, previous_task: str | None = None) -> str:
     if decision == "urgent_care" or skill == "urgent_care":
         return "urgent_care"
     text = message.strip().lower()
-    health_terms = ("便秘", "腹泻", "拉肚子", "腹痛", "肚子疼", "胀气", "消化", "肠道", "肠胃", "益生菌",
+    health_terms = ("健康", "便秘", "腹泻", "拉肚子", "腹痛", "肚子疼", "胀气", "消化", "肠道", "肠胃", "益生菌",
                     "症状", "疾病", "病因", "就医", "医生", "药物", "用药", "饮食", "纤维", "喝水", "饮水", "运动",
                     "粪便", "大便", "便便", "排便", "恶心", "呕吐", "发烧")
     health_question = any(term in text for term in health_terms)
     product_terms = ("绑定", "解绑", "登录", "登陆", "退出", "怎么记录", "如何记录",
-                     "怎么打开", "如何打开", "打不开", "设置", "提醒开关", "关闭提醒", "开启提醒", "授权", "认领",
+                     "怎么打开", "如何打开", "打不开", "设置", "提醒开关", "关闭提醒", "开启提醒",
                      "添加成员", "删除成员", "切换成员", "连接设备", "上传", "导出", "删除记录", "api", "接口", "软件", "网页")
     how_to_use = any(term in text for term in ("怎么用", "如何使用", "怎么使用", "怎么操作", "如何操作"))
-    if skill == "manage_household" or any(term in text for term in product_terms) or (how_to_use and not health_question):
+    if is_household_management_request(text) or any(term in text for term in product_terms) or (how_to_use and not health_question):
         return "product_help"
     if len(text) <= 16 and previous_task in TEXT_TASKS and re.fullmatch(
         r"(?:那.{0,8}呢[？?]?|继续(?:说|讲|解释)?[。！!？?]?|再说一点[。！!]?|然后呢[？?]?|为什么[？?]?|详细(?:一点|说说)[。！!？?]?)", text,

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import AgentProfile, AgentProfileRevision
+from .model_routing import is_household_management_request
 from .skills import SKILL_CONTRACTS
 
 
@@ -66,10 +67,10 @@ def get_or_create_profile(db: Session, household_id: str, member_id: str | None)
 
 
 def route_skill(message: str, decision: str) -> tuple[str, str]:
-    if any(word in message for word in ("家庭", "成员", "授权", "认领")):
-        return "household_steward", "manage_household"
     if decision == "urgent_care":
         return "health_doctor", "urgent_care"
+    if is_household_management_request(message):
+        return "household_steward", "manage_household"
     if any(word in message for word in ("综合分析", "一起分析", "第二意见", "多专家")):
         return "health_doctor", "comprehensive_review"
     if decision == "explain_trend":

@@ -613,6 +613,63 @@ describe("PoopSense core UI", () => {
     expect(mocked.agentChat).toHaveBeenCalledTimes(2);
   });
 
+  it("waits for explicit consent to retry an expired conversation and preserves the next draft and saved sources", async () => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    mocked.conversations.mockResolvedValue([{ conversation_id: "expired_conversation", member_id: "m_001", updated_at: "2026-09-13T00:00:00Z" }]);
+    mocked.conversation.mockResolvedValue({ conversation_id: "expired_conversation", member_id: "m_001", messages: [
+      { message_id: 15, role: "assistant", content: "此前已经保存的回答。", created_at: "2026-09-13T00:00:00Z", model_version: "old-saved-model" },
+    ] });
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    let rejectExpired!: (reason: unknown) => void;
+    mocked.agentChat.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectExpired = reject; }));
+    mocked.agentChat.mockResolvedValueOnce({ ...response, conversation_id: "new_conversation", model_version: "new-top-level-model", message: {
+      ...response.message, content: "这是新对话中的完整回答。", model_version: "new-actual-model",
+    } });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("查看此前对话（1 条）");
+    await user.type(screen.getByLabelText("描述你的情况"), "需要保留的原问题");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    await user.type(screen.getByLabelText("描述你的情况"), "还没发出的下一条草稿");
+    await act(async () => rejectExpired(new ApiError(409, "CONVERSATION_EXPIRED")));
+    expect(await screen.findByText(/上次会话已失效/)).toBeVisible();
+    expect(mocked.agentChat).toHaveBeenCalledTimes(1);
+    expect(mocked.agentChat).toHaveBeenNthCalledWith(1, expect.anything(), "m_001", "需要保留的原问题", "expired_conversation");
+    expect(screen.getByLabelText("描述你的情况")).toHaveValue("还没发出的下一条草稿");
+    expect(screen.queryByRole("button", { name: "重试这条提问" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "在新对话中重试" }));
+    expect(await screen.findByText("这是新对话中的完整回答。")).toBeVisible();
+    expect(mocked.agentChat).toHaveBeenCalledTimes(2);
+    expect(mocked.agentChat).toHaveBeenNthCalledWith(2, expect.anything(), "m_001", "需要保留的原问题", undefined);
+    expect(screen.getAllByText("需要保留的原问题")).toHaveLength(1);
+    expect(screen.getByLabelText("描述你的情况")).toHaveValue("还没发出的下一条草稿");
+    const newAnswer = screen.getByText("这是新对话中的完整回答。").closest(".message") as HTMLElement;
+    expect(newAnswer).toHaveTextContent("本次模型：new-actual-model");
+    expect(newAnswer).not.toHaveTextContent("old-saved-model");
+    expect(newAnswer).not.toHaveTextContent("new-top-level-model");
+    await user.click(screen.getByText("查看此前对话（1 条）"));
+    expect(screen.getByText("此前已经保存的回答。").closest(".message")).toHaveTextContent("本次模型：old-saved-model");
+  });
+
+  it("requires an explicit new conversation retry for an expired report request too", async () => {
+    window.history.replaceState(null, "", "/#/report?member=m_001&record=expired_report");
+    mocked.sessions.mockResolvedValue([{ session_id: "expired_report", occurred_at: "2026-09-13T00:00:00Z", assignment_version: 1, assessment_status: "assessed", risk_level: "normal", message: "已经归属的本次记录。" }]);
+    mocked.conversations.mockResolvedValue([{ conversation_id: "expired_report_conversation", member_id: "m_001", updated_at: "2026-09-13T00:00:00Z" }]);
+    mocked.conversation.mockResolvedValue({ conversation_id: "expired_report_conversation", member_id: "m_001", messages: [] });
+    mocked.analyzeSession.mockRejectedValueOnce(new ApiError(409, "CONVERSATION_EXPIRED"));
+    const user = userEvent.setup();
+    render(<App />);
+    expect(await screen.findByText(/上次会话已失效/)).toBeVisible();
+    expect(mocked.analyzeSession).toHaveBeenCalledTimes(1);
+    expect(mocked.analyzeSession).toHaveBeenNthCalledWith(1, expect.anything(), "m_001", "expired_report", "expired_report_conversation");
+    await user.type(screen.getByLabelText("描述你的情况"), "稍后要问的草稿");
+    await user.click(screen.getByRole("button", { name: "在新对话中重试" }));
+    await waitFor(() => expect(mocked.analyzeSession).toHaveBeenCalledTimes(2));
+    expect(mocked.analyzeSession).toHaveBeenNthCalledWith(2, expect.anything(), "m_001", "expired_report", undefined);
+    expect(screen.getByLabelText("描述你的情况")).toHaveValue("稍后要问的草稿");
+    expect(mocked.agentChat).not.toHaveBeenCalled();
+  });
+
   it("claims a pending session only after a member is selected", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -1408,6 +1465,35 @@ describe("PoopSense core UI", () => {
     await user.click(screen.getByRole("button", { name: "← 返回" }));
     expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
     expect(screen.queryByRole("button", { name: "查看新记录" })).not.toBeInTheDocument();
+  });
+
+  it.each(["normal", "redline"] as const)("keeps direct chat, its reply and draft when polling receives a %s record", async riskLevel => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    mocked.agentChat.mockResolvedValue({ ...response, model_version: "deepseek-v4-pro", message: { ...response.message, content: "已经生成的完整回答。", model_version: "deepseek-v4-pro" } });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "现在的问题");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText("已经生成的完整回答。")).toBeVisible();
+    await user.type(screen.getByLabelText("描述你的情况"), "正在编辑的下一条草稿");
+    const focused = document.activeElement;
+    mocked.sessions.mockResolvedValue([{ session_id: "direct_chat_new", occurred_at: "2026-09-13T00:00:00Z", assignment_version: 1, assessment_status: "assessed", risk_level: riskLevel, message: "刚收到的记录。", simulated: true }]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    const notice = await screen.findByRole("complementary", { name: "新记录提醒" });
+    expect(window.location.hash).toBe("#/chat?member=m_001");
+    expect(screen.getByRole("heading", { name: "聊聊你的记录" })).toBeVisible();
+    expect(screen.getByText("已经生成的完整回答。")).toBeVisible();
+    expect(screen.getByText("本次模型：deepseek-v4-pro")).toBeVisible();
+    expect(screen.getByLabelText("描述你的情况")).toHaveValue("正在编辑的下一条草稿");
+    expect(document.activeElement).toBe(focused);
+    expect(mocked.analyzeSession).not.toHaveBeenCalled();
+    expect(mocked.agentChat).toHaveBeenCalledTimes(1);
+    expect(within(notice).getByRole(riskLevel === "redline" ? "alert" : "status")).toBeVisible();
+    await user.click(within(notice).getByRole("button", { name: "查看新记录" }));
+    expect(window.location.hash).toBe("#/report?member=m_001&record=direct_chat_new");
+    expect(await screen.findByRole("heading", { name: "收到，这次交给我。" })).toBeVisible();
   });
 
   it("keeps an urgent queued record ahead of a later normal record until each is dismissed", async () => {
