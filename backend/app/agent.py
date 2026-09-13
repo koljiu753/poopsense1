@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -16,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .model_provider import is_baichuan_medical_plus, medical_policy_decision, prepare_model_payload, render_model_reply
 from .models import AgentAction, AgentConversation, AgentFeedback, AgentHandoff, AgentMemoryEntry, AgentMessage, AgentRun, AgentStep, Assessment, MemberAssignment, Observation, OutboxEvent, SessionRecord
 from .service import AuthContext, POLICY_VERSION, authorize_member_view, member_trend
 from .agent_native import AGENT_SPECS, get_or_create_profile, in_quiet_hours, route_skill
@@ -34,6 +36,40 @@ CHAT_REPLY_FORMAT = (
     "段落之间空一行；不用大标题、表格、代码块或多层列表。"
     "用户明确要求详细时可适当展开。安全提醒和不确定性说明必须完整，优先于篇幅要求。"
 )
+REPORT_EXPLANATION_RULES = (
+    "报告解释约束：current_session 是规则报告，仅解释已有事实和建议，不增加建议类别、剂量、频次或检查项目。"
+    "未触发红线不等于没有异常或排除疾病，不能说完全正常。"
+    "baseline_progress.status=collecting 或各指标 baseline_status=insufficient 时，不能声称与个人基线一致。"
+    "没有基线比较结论就说明仍需积累记录。内部数据字段不是文献，不得用^[trend]^等伪引用。"
+    "外部研究不能证明本次记录正常或证明本产品有效。文献来源由模型提供，不能声称已经核验。"
+    "规则负责风险边界，模型负责文字解释，不得声称所有回答或建议都是规则生成。"
+)
+
+
+def validate_report_explanation(reply: str, report: dict, trend: dict) -> None:
+    """Reject known report contradictions; this is not a clinical validator."""
+    body = reply
+    compact = re.sub(r"\s+|[*_`：:]", "", body)
+    def asserts(pattern: str) -> bool:
+        for match in re.finditer(pattern, compact):
+            prefix = re.split(r"[。！？；，,\n]", compact[:match.start()])[-1][-14:]
+            if not re.search(r"(?:不等于|不代表|不能(?:说|认为|说明)?|不可(?:认为|说明)?|并非|并不是|无法|未能|尚不能|不能确定)(?:其|是|这次|本次|结果|为)*$", prefix):
+                return True
+        return False
+
+    absolute_normal = asserts(r"(?:未检测到|没有|无)(?:任何)?异常|完全正常|排除(?:了)?疾病")
+    baseline_claim = asserts(r"(?:与|符合)[^。！？\n]{0,20}(?:基线|个人常态)[^。！？\n]{0,8}(?:一致|相符|正常)|(?:基线|个人常态)[^。！？\n]{0,8}(?:一致|相符)")
+    baseline_established = trend.get("baseline_progress", {}).get("status") == "established"
+    dimensions = trend.get("dimensions", {})
+    statuses = [dimension.get("baseline_status") for dimension in dimensions.values() if isinstance(dimension, dict)]
+    baseline_confirmed = baseline_established and bool(statuses) and all(status == "within_baseline" for status in statuses)
+    invalid_citation = re.search(r"\^\[(?![1-9][0-9]*\]\^)[^\]]+\]\^", body)
+    # A report may restate an existing quantity, but cannot prescribe a new one.
+    quantities = re.findall(r"每(?:[一二三四五六七八九十0-9]+)?小时|每[一二三四五六七八九十0-9]+(?:天|日|周)|(?:[0-9]+(?:\.[0-9]+)?|[一二两三四五六七八九十百千万]+)\s*(?:毫升|m[lL]|分钟|克|mg)", body)
+    known_advice = json.dumps(report.get("recommendations", []), ensure_ascii=False)
+    added_quantity = any(quantity not in known_advice for quantity in quantities)
+    if absolute_normal or (baseline_claim and not baseline_confirmed) or invalid_citation or added_quantity:
+        raise HTTPException(status_code=502, detail={"code": "MODEL_REPORT_CONTRADICTION"})
 
 
 def _configure_model_logging() -> logging.Logger:
@@ -159,20 +195,17 @@ def safety_decision(message: str) -> tuple[str, list[str]]:
 
 
 def call_model(messages: list[dict[str, str]], *, max_tokens: int | None = None,
-               disable_thinking: bool = False) -> str:
+               disable_thinking: bool = False, include_references: bool = False) -> str:
     request_settings = settings
     started = time.perf_counter()
     call_status = "MODEL_PROVIDER_FAILED"
     try:
         if not request_settings.llm_api_key:
             raise HTTPException(status_code=503, detail={"code": "MODEL_NOT_CONFIGURED"})
-        payload: dict[str, Any] = {
-            "model": request_settings.llm_model, "messages": messages, "temperature": 0.2,
-        }
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-        if disable_thinking:
-            payload["thinking"] = {"type": "disabled"}
+        payload = prepare_model_payload(
+            request_settings.llm_base_url, request_settings.llm_model, messages,
+            max_tokens=max_tokens, disable_thinking=disable_thinking,
+        )
         with _borrow_model_client() as client:
             response = client.post(
                 f"{request_settings.llm_base_url.rstrip('/')}/chat/completions",
@@ -182,13 +215,21 @@ def call_model(messages: list[dict[str, str]], *, max_tokens: int | None = None,
             )
         response.raise_for_status()
         choice = response.json()["choices"][0]
-        if max_tokens is not None and choice.get("finish_reason") != "stop":
+        check_complete = max_tokens is not None or is_baichuan_medical_plus(
+            request_settings.llm_base_url, request_settings.llm_model,
+        )
+        if check_complete and choice.get("finish_reason") != "stop":
             # Never present a budget-truncated safety explanation as a complete reply.
             raise HTTPException(status_code=502, detail={"code": "MODEL_RESPONSE_INCOMPLETE"})
         content = choice["message"]["content"]
-        if max_tokens is not None and (not isinstance(content, str) or not content.strip()):
+        if check_complete and (not isinstance(content, str) or not content.strip()):
             raise HTTPException(status_code=502, detail={"code": "MODEL_EMPTY_RESPONSE"})
         reply = content.strip()
+        if include_references:
+            reply = render_model_reply(
+                request_settings.llm_base_url, request_settings.llm_model, choice,
+                include_references=True,
+            )
         call_status = "succeeded"
         return reply
     except HTTPException as exc:
@@ -214,6 +255,7 @@ def call_chat_model(messages: list[dict[str, str]]) -> str:
     return call_model(
         messages,
         max_tokens=max(256, min(settings.llm_chat_max_tokens, 4096)),
+        include_references=True,
         # This provider extension must not leak into a custom OpenAI-compatible API.
         disable_thinking=urlsplit(settings.llm_base_url).hostname == "api.deepseek.com",
     )
@@ -550,6 +592,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
         "低质量或缺失数据必须明确说无法可靠判断。回答简洁、中文。\n"
         f"{CHAT_REPLY_FORMAT}\n"
         "如果 current_session 存在，它是确定性规则生成的结构化报告；只补充易懂解释，不得改写其结论、建议类别或下一步。\n"
+        f"{REPORT_EXPLANATION_RULES}\n"
         f"安全上下文：{json.dumps(safe_context, ensure_ascii=False)}"
     )
     audit = AgentAction(
@@ -568,9 +611,19 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
     db.add(audit)
     db.commit()
     model_version_used = settings.llm_model
+    # Repeated real Plus probes expanded frozen report facts and fabricated
+    # internal citations. Keep automatic sensor reports deterministic; ordinary
+    # questions still use the selected medical model. Avoid two wasted calls.
+    rule_report = bool(session_report) and model_caller is call_chat_model and is_baichuan_medical_plus(settings.llm_base_url, settings.llm_model)
     try:
         try:
-            reply = model_caller([{"role": "system", "content": system}, {"role": "user", "content": text}])
+            if rule_report:
+                reply = f"{session_report['summary']} {session_report['next_step']}"
+                model_version_used = "policy-engine"
+            else:
+                reply = model_caller([{"role": "system", "content": system}, {"role": "user", "content": text}])
+                if session_report:
+                    validate_report_explanation(reply, session_report, trend)
         except HTTPException:
             if not session_report:
                 raise
@@ -607,10 +660,15 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
                 for item in self_reports
             ], "allowed_actions": allowed}
             try:
-                coach_reply = model_caller([
-                    {"role": "system", "content": "你是生活教练，只给低风险饮水、饮食、运动与作息行动，不诊断。" + CHAT_REPLY_FORMAT + "只能使用以下最小上下文：" + json.dumps(coach_context, ensure_ascii=False)},
-                    {"role": "user", "content": text},
-                ])
+                if rule_report:
+                    coach_reply = "\n\n".join(item["guidance"] for item in session_report["recommendations"])
+                else:
+                    coach_reply = model_caller([
+                        {"role": "system", "content": "你是生活教练，只给低风险饮水、饮食、运动与作息行动，不诊断。" + CHAT_REPLY_FORMAT + REPORT_EXPLANATION_RULES + "只能使用以下最小上下文：" + json.dumps(coach_context, ensure_ascii=False)},
+                        {"role": "user", "content": text},
+                    ])
+                    if session_report:
+                        validate_report_explanation(coach_reply, session_report, trend)
             except HTTPException:
                 if not session_report:
                     raise
@@ -796,14 +854,28 @@ def orchestrate_session(db: Session, session_record_id: int, model_caller=call_m
         '{"action":"...","reason":"...","message":"..."}。'
         f"\n{json.dumps({'allowed_actions': allowed, 'assessment': {'status': assessment.status, 'risk_level': assessment.risk_level, 'message': assessment.message}}, ensure_ascii=False)}"
     )
-    raw = model_caller([
-        {"role": "system", "content": "你是受确定性安全护栏约束的调度器，不得发明动作。"},
-        {"role": "user", "content": prompt},
-    ])
-    decision = parse_model_decision(raw)
+    policy_selection = model_caller is call_model and is_baichuan_medical_plus(settings.llm_base_url, settings.llm_model)
+    if policy_selection:
+        # The medical endpoint refuses operational JSON. Use the existing action
+        # policy and retain all authorization/delivery gates below.
+        decision = medical_policy_decision(allowed)
+    else:
+        raw = model_caller([
+            {"role": "system", "content": "你是受确定性安全护栏约束的调度器，不得发明动作。"},
+            {"role": "user", "content": prompt},
+        ])
+        decision = parse_model_decision(raw)
     selected = decision.get("action")
     if selected not in allowed:
         raise HTTPException(status_code=502, detail={"code": "MODEL_ACTION_NOT_ALLOWED"})
+    if policy_selection:
+        # Retrying the same event must not count its own pending action as a new
+        # daily-limit attempt and create a second audit action.
+        existing = db.scalar(select(AgentAction).where(
+            AgentAction.idempotency_key == f"orchestration:{record.id}:{assignment.version}:{selected}",
+        ))
+        if existing:
+            return existing
     member_id = assignment.member_id
     from .models import HouseholdMember
     member = db.get(HouseholdMember, member_id)
@@ -839,8 +911,9 @@ def orchestrate_session(db: Session, session_record_id: int, model_caller=call_m
         action_type=f"llm_{selected}", status=status,
         recipient_id=member.linked_user_id if member else None,
         authorization_basis="subject_member" if member and member.linked_user_id else "policy_only",
-        policy_version=POLICY_VERSION, model_version=settings.llm_model,
-        input_summary={"assessment_id": assessment.id, "allowed_actions": allowed},
+        policy_version=POLICY_VERSION, model_version="policy-engine" if policy_selection else settings.llm_model,
+        input_summary={"assessment_id": assessment.id, "allowed_actions": allowed,
+                       "decision_source": "policy" if policy_selection else "model"},
         result={"reason": decision.get("reason", ""), "message": decision.get("message", "")},
         idempotency_key=key, created_at=now,
         processed_at=None if status == "pending" else now,

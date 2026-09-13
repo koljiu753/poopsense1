@@ -48,6 +48,7 @@ from .service import (
     grant_family_view, hash_secret, ingest, member_trend, revoke_family_view,
 )
 from .agent import analyze_session as agent_analyze_session, chat as agent_chat, close_model_client, resume_paused_chat
+from .model_provider import provider_name
 from .service import POLICY_VERSION
 from .memory import create_self_report, get_health_profile, list_memory, save_health_profile, update_memory
 from .inline_worker import inline_worker_loop, run_inline_worker_cycle, worker_runtime
@@ -856,7 +857,7 @@ def agent_status(household_id: str, x_household_key: str = Header(...),
                  db: Session = Depends(get_db)):
     authorize_household(db, household_id, x_household_key)
     return AgentStatusResult(
-        provider="deepseek", model=settings.llm_model,
+        provider=provider_name(settings.llm_base_url), model=settings.llm_model,
         configured=bool(settings.llm_api_key),
         proactive_enabled=settings.llm_proactive_enabled and bool(settings.llm_api_key),
         policy_version=POLICY_VERSION,

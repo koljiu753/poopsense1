@@ -40,8 +40,8 @@ notepad .env.local
 
 ```powershell
 $env:POOPSENSE_LLM_API_KEY="你的密钥"
-$env:POOPSENSE_LLM_BASE_URL="https://api.deepseek.com"
-$env:POOPSENSE_LLM_MODEL="deepseek-v4-pro"
+$env:POOPSENSE_LLM_BASE_URL="https://api.baichuan-ai.com/v1"
+$env:POOPSENSE_LLM_MODEL="Baichuan-M3-Plus"
 $env:POOPSENSE_LLM_PROACTIVE_ENABLED="true"
 ```
 
@@ -55,16 +55,24 @@ $env:POOPSENSE_LLM_PROACTIVE_ENABLED="true"
 worker 命令即可完成主动闭环。`agent/status` 会返回 worker 是否运行、最后一次轮询、最近错误和
 累计处理数。生产环境应设置 `POOPSENSE_INLINE_WORKER_ENABLED=false`，并将 worker 作为独立进程部署。
 
-当前默认供应商为 DeepSeek，模型为官方 API 标识 `deepseek-v4-pro`，主动调度默认开启。
-密钥也可以通过 `DEEPSEEK_API_KEY` 提供。密钥不得写进仓库、前端代码或浏览器存储。
+未设置通用模型配置时，代码默认仍为 DeepSeek `deepseek-v4-pro`；上面的三个变量选择百川。历史配置也可通过 `DEEPSEEK_API_KEY` 提供密钥。密钥不得写进仓库、前端代码或浏览器存储。
 
 ### 交互问答与耗时排查（2026-09-12 源码）
 
-交互问答要求简短、便于手机阅读的回答，默认输出预算为 1024 tokens；仅对官方 DeepSeek 地址显式关闭思考。空正文或未完整结束的交互回复会明确失败，不把截断内容作为完整建议。普通问答不使用假回答兜底；会话报告仍保留有明确标识的规则降级。后台计划与周报参数不受交互短答策略影响。
+交互问答要求简短、便于手机阅读的回答，默认输出预算为 1024 tokens；仅对官方 DeepSeek 地址显式关闭思考。空正文或未完整结束的交互回复会明确失败，不把截断内容作为完整建议。普通问答不使用假回答兜底；会话报告保留有明确标识的规则结果。9/13起周报也使用有输出上限的文字调用。
 
 模型请求按进程复用 HTTPX 连接，凭据、正文与超时仍逐次传入，未缓存回答。网络请求不持有连接池管理锁；应用退出时退役连接池，已借出的请求完成后再关闭连接。每次调用向标准错误输出一行 `model_call` 日志，仅含模型名、状态和毫秒耗时；不记录提问、回答、密钥或原始异常内容。该日志独立于根日志级别，不需要启用全局调试日志。
 
-本轮源码测试通过不等于公网后端已更新。当前新版前端仍代理既有演示后端，上述连接复用、耗时日志和交互短答策略尚未在线生效，不能据此宣称模型提速。
+源码测试通过不等于公网后端已更新；实际发布状态以仓库发布说明为准。请求日志可用于定位等待，连接复用或更换模型本身不证明提速。
+
+### 百川医疗模型适配（2026-09-13）
+
+- 依据[百川官方医疗接口](https://platform.baichuan-ai.com/docs/medical)，M3-Plus不支持system角色。适配器把完整软件约束与已授权上下文保存在首条user消息的独立JSON字段中，不删除风险和权限约束。默认`output_style=patient`，关闭追加追问，仅请求已引用资料；不向Plus发送DeepSeek思考参数。
+- 问答真实调用`Baichuan-M3-Plus`；保留原文中的引用编号，使用`choice.grounding.evidence`映射安全HTTP(S)链接，不展示思考字段。来源明确标记“模型提供，未逐条核验”，不代表医学证据已审查。
+- 多次真实虚构报告测试出现额外建议频次和内部字段伪引用，因此Plus模式的单次传感报告直接使用确定性事实与建议，`model_version=policy-engine`，不等待两次模型扩写。这不是百川生成报告通过验收。普通问答仍使用百川。
+- 周报可靠性门控不变；模型文字经已知矛盾检查后才保存，拒答、截断或检查失败保留规则摘要。文字检查只覆盖已知模式，不是完整医学审查，也不保证识别所有错误。
+- Plus在真实调用中拒绝后台严格JSON指令，因此动作选择使用既有规则白名单，审计记录`policy-engine`和`decision_source=policy`。成员开关、静默时段、限次、接收人、派发前授权与幂等仍生效；历史`llm_*`动作名称为兼容保留，不表示调用模型。
+- Vercel应在实际后端项目设置三个通用变量并重新部署，不能只改前端项目。公开演示仍为临时SQLite和关闭worker，不代表正式生产服务。
 
 ## Agent-native 结构
 

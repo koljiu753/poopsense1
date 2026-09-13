@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .agent import call_model
+from .agent import REPORT_EXPLANATION_RULES, call_chat_model, validate_report_explanation
 from .config import settings
 from .memory import authorize_memory_edit
 from .models import AgentAction, UserNotification, WeeklyHealthReport
@@ -29,7 +29,7 @@ def list_reports(db: Session, auth: AuthContext, member_id: str) -> list[dict]:
     return [_view(row) for row in rows]
 
 
-def generate(db: Session, auth: AuthContext, member_id: str, model_caller=call_model) -> dict:
+def generate(db: Session, auth: AuthContext, member_id: str, model_caller=call_chat_model) -> dict:
     authorize_memory_edit(db, auth, member_id)
     today = datetime.now(timezone.utc).date()
     start = today - timedelta(days=today.weekday())
@@ -57,8 +57,24 @@ def generate(db: Session, auth: AuthContext, member_id: str, model_caller=call_m
         model_version = "policy-engine"
         if settings.llm_api_key:
             try:
-                summary = model_caller([{"role": "system", "content": "只解释给定周报事实，不诊断、不新增事实，80字内中文。"},
-                                        {"role": "user", "content": json.dumps(facts, ensure_ascii=False)}])
+                explanation = model_caller([
+                    {"role": "system", "content": (
+                        "只解释给定周报事实和已有建议，不诊断、不新增事实，80字内中文。"
+                        "current_session 表示本次规则周报。记录次数和每周频率是观察事实，"
+                        "不是建议执行的次数或频率。安全提醒优先于篇幅限制。"
+                        + REPORT_EXPLANATION_RULES
+                    )},
+                    {"role": "user", "content": json.dumps({
+                        "current_session": {"facts": facts, "recommendations": recommendations},
+                        "baseline_progress": trend.get("baseline_progress", {}),
+                    }, ensure_ascii=False)},
+                ])
+                # The shared quantity guard also needs the deterministic observed
+                # frequency. This validation context does not add a user recommendation.
+                validate_report_explanation(explanation, {
+                    "recommendations": [*recommendations, summary],
+                }, trend)
+                summary = explanation
                 model_version = settings.llm_model
             except Exception:
                 pass
