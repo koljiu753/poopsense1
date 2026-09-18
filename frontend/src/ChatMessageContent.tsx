@@ -1,8 +1,31 @@
-import { createElement, Fragment, memo, type ReactNode } from "react";
+import { createElement, Fragment, memo, useMemo, useRef, useState, type ReactNode } from "react";
 import { Lexer, type MarkedToken, type Token } from "marked";
 import "./chat-message-content.css";
 
-type ChatMessageContentProps = { text: string };
+type ChatMessageContentProps = { text: string; onReading?: () => void };
+
+function shortPlainParagraphs(tokens: Token[]): ReactNode[] | null {
+  // Only unformatted paragraphs qualify. Lists, links, code and quotes retain
+  // their original structure, and no sentence or ending is summarized away.
+  if (!tokens.every(token => token.type === "space" || token.type === "paragraph"
+    && token.tokens?.every(child => child.type === "text" && !("tokens" in child && child.tokens)))) return null;
+  return tokens.flatMap((token, tokenIndex) => {
+    if (token.type !== "paragraph" || !token.tokens) return [];
+    const text = token.tokens.map(child => "text" in child ? child.text : "").join("");
+    if (text.length < 180) return [<p className="chat-paragraph" key={tokenIndex}>{text}</p>];
+    const sentences = text.match(/[^。！？!?]*[。！？!?]+[”’」』）)\]]*|[^。！？!?]+$/gu) ?? [text];
+    // Guard against a future tokenizer/regexp change losing any characters.
+    if (sentences.join("") !== text) return [<p className="chat-paragraph" key={tokenIndex}>{text}</p>];
+    const paragraphs: string[] = [];
+    let paragraph = "";
+    for (const sentence of sentences) {
+      paragraph += sentence;
+      if (paragraph.length >= 90) { paragraphs.push(paragraph); paragraph = ""; }
+    }
+    if (paragraph) paragraphs.push(paragraph);
+    return paragraphs.map((part, index) => <p className="chat-paragraph" key={`${tokenIndex}-${index}`}>{part}</p>);
+  });
+}
 
 function safeLink(href: string): string | null {
   // Accept complete web addresses only; never interpret application routes,
@@ -76,18 +99,31 @@ function renderToken(token: MarkedToken): ReactNode {
 }
 
 /** Safe, synchronous answer formatting. Unchanged messages do not reparse while typing. */
-const ChatMessageContent = memo(function ChatMessageContent({ text }: ChatMessageContentProps) {
-  let content: ReactNode;
-  try {
+const ChatMessageContent = memo(function ChatMessageContent({ text, onReading }: ChatMessageContentProps) {
+  const [large, setLarge] = useState(false);
+  const beginning = useRef<HTMLDivElement>(null);
+  const longAnswer = text.length >= 400;
+  const content = useMemo(() => {
+    try {
     // Keep unusually large replies readable without expensive Markdown work on
     // a phone. This fallback preserves the entire reply, including its ending.
-    content = text.length > 50_000
-      ? <div className="chat-plaintext">{text}</div>
-      : renderTokens(Lexer.lex(text, { gfm: true, breaks: true }));
-  } catch {
-    content = <div className="chat-plaintext">{text}</div>;
-  }
-  return <div className="chat-message-content">{content}</div>;
+    if (text.length > 50_000) return <div className="chat-plaintext">{text}</div>;
+    const tokens = Lexer.lex(text, { gfm: true, breaks: true });
+    return shortPlainParagraphs(tokens) ?? renderTokens(tokens);
+    } catch {
+      return <div className="chat-plaintext">{text}</div>;
+    }
+  }, [text]);
+  return <div className={`chat-answer-reader${large ? " is-large" : ""}`}>
+    {longAnswer ? <div className="chat-reading-tools"><span>全文阅读</span><button type="button" aria-pressed={large}
+      onClick={() => { onReading?.(); setLarge(value => !value); }}>{large ? "恢复字号" : "放大字号"}</button></div> : null}
+    <div ref={beginning} tabIndex={longAnswer ? -1 : undefined} className="chat-message-content">{content}</div>
+    {longAnswer ? <button type="button" className="chat-read-from-start" onClick={() => {
+      onReading?.();
+      beginning.current?.focus({ preventScroll: true });
+      beginning.current?.scrollIntoView?.({ block: "start", behavior: "instant" });
+    }}>回到这条回答开头 ↑</button> : null}
+  </div>;
 });
 
 export default ChatMessageContent;

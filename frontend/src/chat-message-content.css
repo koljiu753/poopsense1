@@ -110,3 +110,15 @@
 .chat-message-content > :first-child { margin-top: 0; }
 .chat-message-content > :last-child,
 .chat-message-content blockquote > :last-child { margin-bottom: 0; }
+
+.chat-answer-reader { min-width: 0; max-width: 100%; }
+.chat-answer-reader.is-large .chat-message-content { font-size: 19px; line-height: 1.85; }
+.chat-answer-reader .chat-message-content { scroll-margin-top: 24px; }
+.chat-reading-tools { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chat-reading-tools > span { color: var(--muted, #57514a); font-size: 12px; }
+.experience .chat-panel .chat-answer-reader :is(.chat-reading-tools button,.chat-read-from-start) {
+  min-height: 44px; border: 1px solid var(--ink); border-radius: 12px; padding: 8px 12px; background: var(--cream); color: var(--ink); font: inherit; font-size: 13px; line-height: 1.5;
+}
+.experience .chat-panel .chat-reading-tools button[aria-pressed="true"] { background: var(--yellow); }
+.experience .chat-panel .chat-answer-reader .chat-read-from-start { margin-top: 16px; max-width: 100%; }
+.chat-answer-reader :is(button,.chat-message-content):focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }

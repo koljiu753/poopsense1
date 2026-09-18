@@ -1,5 +1,11 @@
 # PoopSense Backend
 
+## 问答上下文与篇幅（2026-09-18）
+
+`chat_refinement.py`提供本题的`brief/detailed`格式偏好及保守的上下文选择。明确一般科普或要求不引用个人资料时，模型请求不包含个人趋势、评估、记忆、昵称、Soul和此前个人对话；不确定或涉及个人情况时仍使用原授权上下文。短追问可继承科普范围，重新涉及个人时恢复授权数据；权限与红线检查先行，原供应商分工不变。
+
+消息metadata和审计input_summary保存`response_style`及`context_scope`，不另记录完整提示词或凭据。默认100–180中文字是提示目标；实际百川仍可能更长，不能按此承诺时延或字数。完整结束检查、正文及末尾提醒保留，不用截断或第二次模型请求压缩回答。详细验证见[问答体验更新](../docs/releases/2026-09-18-chat-reading.md)。
+
 ## 周报窗口与更新（2026-09-18）
 
 周报按北京时间自然周统计，截止于请求时刻，排除未来观测；其他趋势查询保留原滚动窗口。`facts.schema_version=2`提供`timezone`、`data_as_of`、`generated_at`、`reliable_days`、`assigned_sessions`与`revision`，原`coverage`仍为可靠记录占已归属记录的比例。

@@ -1,4 +1,5 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Lexer } from "marked";
 import { afterEach, expect, it, vi } from "vitest";
 import ChatMessageContent from "./ChatMessageContent";
@@ -94,4 +95,49 @@ it("preserves complete text and the final warning if formatting fails or a reply
   rerender(<ChatMessageContent text={longText} />);
   expect(untouchedLexer).not.toHaveBeenCalled();
   expect(container.querySelector(".chat-plaintext")?.textContent).toBe(longText);
+});
+
+it("turns an unbroken plain reply into complete-sentence paragraphs without losing the ending", () => {
+  const text = "这段说明需要结合当前记录理解，不能仅根据一次观察推断长期变化。".repeat(8)
+    + "如果出现持续加重的不适，请及时寻求专业帮助！最后这一条也必须完整保留。";
+  const { container } = render(<ChatMessageContent text={text} />);
+  const paragraphs = [...container.querySelectorAll(".chat-paragraph")];
+  expect(paragraphs.length).toBeGreaterThan(2);
+  expect(paragraphs.map(item => item.textContent).join("")).toBe(text);
+  expect(paragraphs.at(-1)).toHaveTextContent("最后这一条也必须完整保留。");
+  expect(paragraphs.every(item => /[。！？!?]$/.test(item.textContent ?? ""))).toBe(true);
+});
+
+it("leaves already structured Markdown and sentence-free text intact", () => {
+  const paragraph = "已经有原始结构的句子。".repeat(30);
+  const { container, rerender } = render(<ChatMessageContent text={`## 原有标题\n\n${paragraph}\n\n- **安全提醒**：请勿忽略。`} />);
+  expect(container.querySelectorAll(".chat-paragraph")).toHaveLength(1);
+  expect(screen.getByRole("heading", { name: "原有标题" })).toBeInTheDocument();
+  expect(screen.getByText("安全提醒").tagName).toBe("STRONG");
+  const noBoundary = "没有完整句子边界所以不拆开".repeat(30);
+  rerender(<ChatMessageContent text={noBoundary} />);
+  expect(container.querySelectorAll(".chat-paragraph")).toHaveLength(1);
+  expect(container.querySelector(".chat-paragraph")?.textContent).toBe(noBoundary);
+});
+
+it("lets keyboard readers enlarge a whole answer and return to its start without reparsing", async () => {
+  const user = userEvent.setup();
+  const text = "保持原文，用户只调整阅读方式。".repeat(40) + "末尾安全提醒。";
+  const onReading = vi.fn();
+  const lex = vi.spyOn(Lexer, "lex");
+  const { container } = render(<ChatMessageContent text={text} onReading={onReading} />);
+  const content = container.querySelector<HTMLElement>(".chat-message-content")!;
+  const scroll = vi.fn(); content.scrollIntoView = scroll;
+  screen.getByRole("button", { name: "放大字号" }).focus();
+  await user.keyboard("{Enter}");
+  expect(container.querySelector(".chat-answer-reader")).toHaveClass("is-large");
+  expect(screen.getByRole("button", { name: "恢复字号" })).toHaveAttribute("aria-pressed", "true");
+  expect(content.textContent).toBe(text);
+  expect(lex).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "回到这条回答开头 ↑" }));
+  expect(content).toHaveFocus();
+  expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: "start", behavior: "instant" });
+  expect(onReading).toHaveBeenCalledTimes(2);
+  expect(content.textContent).toBe(text);
+  expect(lex).toHaveBeenCalledTimes(1);
 });

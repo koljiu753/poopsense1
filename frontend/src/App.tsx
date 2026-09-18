@@ -903,6 +903,7 @@ function AgentDoctor({
   const [historyReady, setHistoryReady] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [sending, setSending] = useState(false);
+  const [requestKind, setRequestKind] = useState<"question" | "report" | "confirmation" | null>(null);
   const [failedQuestion, setFailedQuestion] = useState("");
   const [conversationExpired, setConversationExpired] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -910,6 +911,9 @@ function AgentDoctor({
   const [newReply, setNewReply] = useState(false);
   const newestMessage = useRef<HTMLDivElement>(null);
   const followResponse = useRef(false);
+  const pauseResponseFollowing = useCallback(() => { followResponse.current = false; }, []);
+  const currentAutoSession = useRef(autoSession?.session_id);
+  currentAutoSession.current = autoSession?.session_id;
   const scrollToReply = () => { newestMessage.current?.scrollIntoView?.({ block: "start", behavior: "instant" }); setNewReply(false); };
   useEffect(() => {
     const pauseFollow = () => { followResponse.current = false; };
@@ -992,13 +996,15 @@ function AgentDoctor({
         setConversationId(history.conversation_id);
         const previousAnalysis = [...history.messages]
           .reverse()
-          .find((item) => item.role === "assistant" && item.metadata?.report);
+          .find((item) => item.role === "assistant" && currentAutoSession.current
+            && item.metadata?.report?.session_id === currentAutoSession.current);
         if (previousAnalysis?.metadata?.report) {
           const restoredReport = previousAnalysis.metadata.report;
           setAnalysisReport(restoredReport);
           setReportSource(answerSource(previousAnalysis));
           void followupsPromise.then((followups) => {
-            if (!active || revision !== responseRevision.current || initialFeedbackRevision !== feedbackRevision.current) return;
+            if (!active || revision !== responseRevision.current || initialFeedbackRevision !== feedbackRevision.current
+              || restoredReport.session_id !== currentAutoSession.current) return;
             const restoredFollowup = followups.find(
             (item) => item.source_session_id === restoredReport.session_id,
           ) ?? null;
@@ -1064,6 +1070,7 @@ function AgentDoctor({
       setMessages((current) => [...current, { role: "user", text: clean }]);
     }
     setSending(true);
+    setRequestKind(options?.session ? "report" : "question");
     setChatError("");
     setDetailWarning("");
     try {
@@ -1111,7 +1118,7 @@ function AgentDoctor({
       setConversationExpired(caught instanceof ApiError && caught.message === "CONVERSATION_EXPIRED");
       setChatError(friendlyError(caught));
     } finally {
-      if (isCurrent()) { sendBusy.current = false; setSending(false); }
+      if (isCurrent()) { sendBusy.current = false; setSending(false); setRequestKind(null); }
     }
   }
   useEffect(() => {
@@ -1128,6 +1135,7 @@ function AgentDoctor({
   async function resolvePausedRun(confirmed: boolean) {
     if (!agentRun || agentRun.status !== "paused" || sending) return;
     setSending(true);
+    setRequestKind("confirmation");
     setChatError("");
     try {
       const result = await api.resumeAgentRun(config, agentRun.run_id, confirmed);
@@ -1141,6 +1149,7 @@ function AgentDoctor({
       setChatError(friendlyError(caught));
     } finally {
       setSending(false);
+      setRequestKind(null);
     }
   }
   async function rateMessage(messageId: number, rating: "helpful" | "not_helpful") {
@@ -1170,13 +1179,14 @@ function AgentDoctor({
       setSavingFollowup(false);
     }
   }
+  const visibleReport = autoSession && analysisReport?.session_id === autoSession.session_id ? analysisReport : null;
   return (
     <section className="page doctor-page">
       <div className="doctor-head">
         <button onClick={onBack}>← 返回</button>
         <div>
-          <h1>{autoSession || analysisReport ? "本次分析报告" : "聊聊你的记录"}</h1>
-          <p className="report-record-context">{name}{latestSession ? ` · ${new Date(latestSession.occurred_at).toLocaleString("zh-CN", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : " · 还没有已认领记录"}</p>
+          <h1>{autoSession || visibleReport ? "本次分析报告" : "聊聊你的记录"}</h1>
+          <p className="report-record-context">{name}{latestSession ? ` · ${new Date(latestSession.occurred_at).toLocaleString("zh-CN", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : " · 直接问答"}</p>
           {agentStatus?.routing?.mode === "auto" && <p className="model-routing-note">按问题自动选择</p>}
           <details className="assistant-connection"><summary>健康参考 · 自动生成，非医疗诊断</summary><span>
             <i />{" "}
@@ -1193,7 +1203,7 @@ function AgentDoctor({
       </div>
       <div className="doctor-layout">
         <aside>
-          <img src="/poopsense-mascot-pop-v1.webp" alt="Agent 医生形象" />
+          <img src="/poopsense-mascot-pop-v1.webp" alt="PoopSense 助手形象" />
           <b>我能帮你</b>
           <p>
             理解本次记录
@@ -1204,32 +1214,32 @@ function AgentDoctor({
           </p>
           <small>健康参考，不作为医疗诊断。</small>
         </aside>
-        <article className={`chat-panel ${analysisReport ? "has-report" : ""}`}>
+        <article className={`chat-panel ${visibleReport ? "has-report" : ""}`}>
           {latestSession ? (
-            <section className={`current-result-task ${sending ? "analyzing" : ""}`} aria-labelledby="current-result-title">
+            <section className={`current-result-task ${sending && requestKind === "report" ? "analyzing" : ""}`} aria-labelledby="current-result-title">
               <img className="analysis-waiting-character" src={sessionVisual(latestSession).asset} alt="" />
               <div>
                 <small>本次记录</small>
                 <b id="current-result-title">
-                  {sending && !analysisReport
+                  {sending && requestKind === "report" && !visibleReport
                     ? "正在生成完整分析报告…"
                     : failedSessionId === latestSession.session_id
                       ? "本次报告暂未完成，请重试"
-                    : analysisReport?.session_id === latestSession.session_id
-                      ? analysisReport.status === "urgent" ? "安全提醒已生成，请优先查看"
-                        : analysisReport.reliable ? "本次分析与行动建议已完成" : "本次信息不足，等待可靠数据"
+                    : visibleReport?.session_id === latestSession.session_id
+                      ? visibleReport.status === "urgent" ? "安全提醒已生成，请优先查看"
+                        : visibleReport.reliable ? "本次分析与行动建议已完成" : "本次信息不足，等待可靠数据"
                       : "新的身体信号已到达"}
                 </b>
                 <p>{latestSession.message}</p>
                 <div className="analysis-live-steps" aria-live="polite">
                   <span className="done">接收信号</span>
-                  <span className={analysisReport?.session_id === latestSession.session_id ? "done" : ""}>规则检查</span>
-                  <span className={analysisReport?.session_id === latestSession.session_id && analysisReport.reliable ? "done" : ""}>
-                    {analysisReport?.session_id === latestSession.session_id && !analysisReport.reliable ? "等待可靠数据" : "行动建议"}
+                  <span className={visibleReport?.session_id === latestSession.session_id ? "done" : ""}>规则检查</span>
+                  <span className={visibleReport?.session_id === latestSession.session_id && visibleReport.reliable ? "done" : ""}>
+                    {visibleReport?.session_id === latestSession.session_id && !visibleReport.reliable ? "等待可靠数据" : "行动建议"}
                   </span>
                 </div>
               </div>
-              {!sending && analysisReport?.session_id !== latestSession.session_id ? (
+              {!sending && visibleReport?.session_id !== latestSession.session_id ? (
                 <button
                   disabled={!historyReady}
                   onClick={() => void send(
@@ -1242,12 +1252,12 @@ function AgentDoctor({
               ) : null}
             </section>
           ) : null}
-          {analysisReport ? (
+          {visibleReport ? (
             <>
             <AnalysisReport
-              report={analysisReport}
+              report={visibleReport}
               session={latestSession}
-              followup={followup?.followup_id === analysisReport.followup_id ? followup : null}
+              followup={followup?.followup_id === visibleReport.followup_id ? followup : null}
               savingFollowup={savingFollowup}
               feedbackError={feedbackError} onHistory={onHistory}
               onUpdateFollowup={(update) => void updateCurrentFollowup(update)}
@@ -1285,9 +1295,9 @@ function AgentDoctor({
               ) : null}
             </details>
           ) : null}
-          {!latestSession && !analysisReport ? <div className="chat-start"><h2>有什么想了解的？</h2><p>可以直接提问。有了已认领记录后，也能一起看看变化。</p></div> : null}
+          {!latestSession && !visibleReport ? <div className="chat-start"><h2>有什么想了解的？</h2><p>可以直接提问。有了已认领记录后，也能一起看看变化。</p></div> : null}
           <div className="quick-prompts">
-            <span>{latestSession || analysisReport ? "对这次结果还有疑问？" : "也可以从这里开始"}</span>
+            <span>{latestSession || visibleReport ? "对这次结果还有疑问？" : "也可以从这里开始"}</span>
             <button disabled={sending} onClick={() => void send("帮我看看最近趋势")}>
               看看最近趋势
             </button>
@@ -1315,8 +1325,8 @@ function AgentDoctor({
             const visible = historical ? group.slice(-historyCount) : group;
             const content = (!historical || historyOpen) ? visible.map((message, index) => (
               <div key={`${message.role}-${index}-${message.messageId ?? "draft"}`} ref={!historical && index === visible.length - 1 ? newestMessage : undefined} className={`message ${message.role}`}>
-                <b>{message.role === "doctor" ? "Agent 医生" : name}</b>
-                {message.role === "doctor" ? <ChatMessageContent text={message.text} /> : <p>{message.text}</p>}
+                <b>{message.role === "doctor" ? "PoopSense 助手" : name}</b>
+                {message.role === "doctor" ? <ChatMessageContent text={message.text} onReading={pauseResponseFollowing} /> : <p>{message.text}</p>}
                 {message.role === "doctor" && <AnswerSourceDetails source={message.source} />}
                 {message.role === "doctor" && message.messageId ? (
                   <div className="message-feedback" aria-label="评价这条建议">

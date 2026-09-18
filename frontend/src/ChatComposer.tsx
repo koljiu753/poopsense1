@@ -78,9 +78,15 @@ export default function ChatComposer({ sending, onSend, onViewReply }: {
 }
 
 export function ChatWaiting() {
-  const [slow, setSlow] = useState(false);
-  useEffect(() => { const timer = setTimeout(() => setSlow(true), 10000); return () => clearTimeout(timer); }, []);
-  return <div className="chat-waiting" role="status"><span aria-hidden="true" className="chat-waiting-dot" />
-    {slow ? "还在等待回答，你可以先阅读前面的内容。" : "正在整理回答…"}
+  const started = useRef(Date.now());
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - started.current) / 1000))), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const message = elapsed >= 30 ? "这次等待较久，回答还未收到。请不要重复发送；你可以先阅读前面的内容。"
+    : elapsed >= 10 ? "还在等待回答，你可以先写下一条问题，草稿会保留。" : "正在等待回答…";
+  return <div className="chat-waiting"><span aria-hidden="true" className="chat-waiting-dot" />
+    <div><p role="status" aria-live="polite">{message}</p><small aria-live="off">已等待 {elapsed} 秒</small></div>
   </div>;
 }

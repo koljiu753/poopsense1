@@ -489,6 +489,129 @@ describe("model routing provenance", () => {
 });
 
 describe("PoopSense core UI", () => {
+  it("keeps a historical report inside previous conversation when opening direct chat", async () => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    const prior = await mocked.analyzeSession.getMockImplementation()!(null as never, "m_001", "prior_record");
+    mocked.analyzeSession.mockClear();
+    mocked.conversations.mockResolvedValue([{ conversation_id: "history_report" }] as never);
+    mocked.conversation.mockResolvedValue({ conversation_id: "history_report", messages: [{ message_id: 99,
+      role: "assistant", content: "这是此前报告的说明文本", model_version: "saved-report-model",
+      metadata: { report: { ...prior.report!, session_id: "prior_record", headline: "不应变成本次报告的旧结论" } },
+    }] } as never);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("查看此前对话（1 条）");
+    expect(screen.getByRole("heading", { name: "聊聊你的记录" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "不应变成本次报告的旧结论" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "报告来源" })).not.toBeInTheDocument();
+    await user.click(screen.getByText("查看此前对话（1 条）"));
+    expect(screen.getByText("这是此前报告的说明文本")).toBeVisible();
+    expect(screen.getByText("本次模型：saved-report-model")).toBeVisible();
+    expect(screen.getByText("PoopSense 助手")).toBeVisible();
+    expect(screen.queryByText("Agent 医生")).not.toBeInTheDocument();
+    expect(mocked.analyzeSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["current_record", "other_record"])("revalidates the requested record instead of treating historical %s as a fresh report", async historicalId => {
+    window.history.replaceState(null, "", "/#/report?member=m_001&record=current_record");
+    const prior = await mocked.analyzeSession.getMockImplementation()!(null as never, "m_001", "current_record");
+    mocked.analyzeSession.mockClear();
+    mocked.sessions.mockResolvedValue([{ session_id: "current_record", occurred_at: "2026-09-18T00:00:00Z", assignment_version: 1,
+      assessment_status: "assessed", risk_level: "normal", message: "本次已归属记录" }]);
+    mocked.conversations.mockResolvedValue([{ conversation_id: "history_report" }] as never);
+    mocked.conversation.mockResolvedValue({ conversation_id: "history_report", messages: [{ message_id: 99,
+      role: "assistant", content: "历史说明", metadata: { report: { ...prior.report!, session_id: historicalId, headline: "历史卡片不能代替本次校验" } },
+    }] } as never);
+    let finish!: (value: typeof prior) => void;
+    mocked.analyzeSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<App />);
+    await waitFor(() => expect(mocked.analyzeSession).toHaveBeenCalledWith(expect.anything(), "m_001", "current_record", "history_report"));
+    expect(screen.getByText("正在生成完整分析报告…")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "历史卡片不能代替本次校验" })).not.toBeInTheDocument();
+    await act(async () => { finish({ ...prior, report: { ...prior.report!, session_id: "current_record", headline: "本次服务端校验结果" } }); });
+    expect(screen.getByRole("heading", { name: "本次服务端校验结果" })).toBeVisible();
+    expect(mocked.analyzeSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not label an ordinary question as report generation while history is pending", async () => {
+    window.history.replaceState(null, "", "/#/report?member=m_001&record=current_record");
+    mocked.sessions.mockResolvedValue([{ session_id: "current_record", occurred_at: "2026-09-18T00:00:00Z", assignment_version: 1,
+      assessment_status: "assessed", risk_level: "normal", message: "本次已归属记录" }]);
+    mocked.conversations.mockImplementation(() => new Promise(() => {}));
+    mocked.agentChat.mockImplementationOnce(() => new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByLabelText("描述你的情况"), "先了解记录如何使用");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(screen.getByText("正在等待回答…")).toBeVisible();
+    expect(screen.queryByText("正在生成完整分析报告…")).not.toBeInTheDocument();
+    expect(document.querySelector(".current-result-task")).not.toHaveClass("analyzing");
+    expect(mocked.agentChat).toHaveBeenCalledTimes(1);
+    expect(mocked.analyzeSession).not.toHaveBeenCalled();
+  });
+
+  it("hides an existing report on direct-chat navigation without discarding the reply or draft", async () => {
+    window.history.replaceState(null, "", "/#/report?member=m_001&record=ses_latest");
+    mocked.sessions.mockResolvedValue([{ session_id: "ses_latest", occurred_at: "2026-09-18T00:00:00Z", assignment_version: 1,
+      assessment_status: "assessed", risk_level: "normal", message: "本次已归属记录" }]);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: /继续保持稳定节奏/ });
+    const input = screen.getByLabelText("描述你的情况");
+    await user.type(input, "如何理解本次建议");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    await screen.findByText("请尽快联系线下医生；严重症状请立即寻求急诊帮助。");
+    await user.type(input, "准备继续问的草稿{Enter}仍在编辑");
+    await act(async () => { window.location.hash = "#/chat?member=m_001"; });
+    await screen.findByRole("heading", { name: "聊聊你的记录" });
+    expect(screen.queryByRole("heading", { name: /继续保持稳定节奏/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "报告来源" })).not.toBeInTheDocument();
+    expect(document.querySelector(".chat-panel")).not.toHaveClass("has-report");
+    expect(screen.getByText("也可以从这里开始")).toBeVisible();
+    expect(screen.getByText("请尽快联系线下医生；严重症状请立即寻求急诊帮助。")).toBeVisible();
+    expect(input).toHaveValue("准备继续问的草稿\n仍在编辑");
+    await act(async () => { window.location.hash = "#/report?member=m_001&record=ses_latest"; });
+    expect(await screen.findByRole("heading", { name: /继续保持稳定节奏/ })).toBeVisible();
+    expect(input).toHaveValue("准备继续问的草稿\n仍在编辑");
+    expect(mocked.analyzeSession).toHaveBeenCalledTimes(1);
+    expect(mocked.agentChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the draft and reading position when enlarging an earlier reply while another answer arrives", async () => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    mocked.agentChat.mockClear();
+    mocked.agentChat.mockResolvedValueOnce({ ...response, message: { ...response.message, content: "保持原文的长回答。".repeat(55) } });
+    let finish!: (value: typeof response) => void;
+    mocked.agentChat.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const originalScroll = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scroll = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: scroll });
+    try {
+      const user = userEvent.setup();
+      render(<App />);
+      const input = await screen.findByLabelText("描述你的情况");
+      await user.type(input, "请解释"); await user.click(screen.getByRole("button", { name: "发送 →" }));
+      await screen.findByRole("button", { name: "放大字号" });
+      await user.type(input, "第二个问题"); await user.click(screen.getByRole("button", { name: "发送 →" }));
+      await user.type(input, "还没发送的多行草稿{Enter}第二行");
+      scroll.mockClear();
+      await user.click(screen.getByRole("button", { name: "放大字号" }));
+      expect(input).toHaveValue("还没发送的多行草稿\n第二行");
+      await act(async () => { finish({ ...response, message: { ...response.message, message_id: 88, content: "迟到的第二条回答" } }); });
+      expect(screen.getByText("迟到的第二条回答")).toBeVisible();
+      expect(scroll).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "查看刚收到的回答 ↓" })).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "回到这条回答开头 ↑" }));
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(input).toHaveValue("还没发送的多行草稿\n第二行");
+      expect(mocked.agentChat).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalScroll) Object.defineProperty(Element.prototype, "scrollIntoView", originalScroll);
+      else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    }
+  });
+
   it.each(["wheel", "PageUp", "editing"] as const)("preserves reading intent when a reply arrives after %s", async action => {
     window.history.replaceState(null, "", "/#/chat?member=m_001");
     const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");

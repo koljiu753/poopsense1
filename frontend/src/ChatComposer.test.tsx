@@ -2,13 +2,36 @@ import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import ChatComposer from "./ChatComposer";
+import ChatComposer, { ChatWaiting } from "./ChatComposer";
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+it("shows elapsed waiting time while the live status changes only at meaningful thresholds", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-18T10:00:00Z"));
+  const { unmount } = render(<ChatWaiting />);
+  const status = screen.getByRole("status");
+  expect(status).toHaveTextContent("正在等待回答…");
+  expect(screen.getByText("已等待 0 秒")).toHaveAttribute("aria-live", "off");
+  act(() => { vi.advanceTimersByTime(9000); });
+  expect(status).toHaveTextContent("正在等待回答…");
+  expect(status).not.toHaveTextContent("9 秒");
+  expect(screen.getByText("已等待 9 秒")).toBeVisible();
+  act(() => { vi.advanceTimersByTime(1000); });
+  expect(status).toHaveTextContent("还在等待回答，你可以先写下一条问题，草稿会保留。");
+  act(() => { vi.advanceTimersByTime(20000); });
+  expect(status).toHaveTextContent("这次等待较久，回答还未收到。请不要重复发送");
+  expect(screen.getByText("已等待 30 秒")).toBeVisible();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  unmount();
+  expect(vi.getTimerCount()).toBe(0);
+  render(<ChatWaiting />);
+  expect(screen.getByText("已等待 0 秒")).toBeVisible();
 });
 
 it("keeps typing local, rejects whitespace submissions and sends trimmed text only on request", async () => {
