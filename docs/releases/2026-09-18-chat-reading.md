@@ -30,4 +30,8 @@
 
 ## 发布边界
 
+代码`702540702711b68db32878d6f70a4aee91c0a357`已推送main，[GitHub完整检查](https://github.com/koljiu753/poopsense1/actions/runs/35324839005)成功。后端部署`dpl_2L3awf9H7qyDEEjPrpkgLcM6mXL5`与reader前端`dpl_CLCMVDyuuuG6C9Bwe65Q9oUWxWMi`均READY，固定入口返回200，JS `index-6S2fau1O.js` / CSS `index-0CbEecKe.css`与本地构建哈希一致。
+
+16:33–16:34独立公网真实问答两次、无自动重试：DeepSeek返回4.032秒/56汉字；百川返回9.703秒/422汉字（含参考题名，1029总字符）。回执和篇幅/上下文标记正确，百川仍偏长；不同问题的两个时间不能用来排名模型。公网另重复12组mock交互与报告导航检查通过，无捕获JS异常；不以这些mock请求证明线上业务保存。
+
 用户入口保持 https://poopsense-reader-0912.vercel.app/ 。真实微信键盘、长期延迟和演示库跨实例持久化仍未完成验收；平台部署成功不代表正式生产就绪。密钥、供应商分工、worker和硬件能力未在本轮变更。浏览器交互检查使用mock，真实模型检查另行记录，二者不能混同。
