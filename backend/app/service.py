@@ -369,24 +369,37 @@ def revoke_family_view(db: Session, auth: AuthContext, grant_id: int) -> tuple[F
     return grant, len(actions)
 
 
-def member_trend(db: Session, household_id: str, member_id: str, days: int) -> dict:
-    start = datetime.now(timezone.utc) - timedelta(days=days)
+def member_trend(
+    db: Session, household_id: str, member_id: str, days: int, *,
+    period_start: datetime | None = None, period_end: datetime | None = None,
+    as_of: datetime | None = None, calendar_timezone=timezone.utc,
+) -> dict:
+    # Existing trend callers retain their rolling-window semantics. Weekly reports
+    # supply an explicit calendar window and a single, fixed data cutoff instead.
+    bounded = period_start is not None
+    now = as_of or datetime.now(timezone.utc)
+    start = period_start or now - timedelta(days=days)
+    window_filters = [SessionRecord.occurred_at >= start]
+    if bounded:
+        window_filters.append(SessionRecord.occurred_at <= now)
+        if period_end is not None:
+            window_filters.append(SessionRecord.occurred_at < period_end)
     rows = db.execute(
-        select(SessionRecord, Assessment)
+        select(SessionRecord, Assessment, MemberAssignment)
         .join(MemberAssignment, MemberAssignment.session_id == SessionRecord.id)
         .join(Assessment, Assessment.session_id == SessionRecord.id)
         .where(
             SessionRecord.household_id == household_id,
-            SessionRecord.occurred_at >= start,
+            *window_filters,
             MemberAssignment.active.is_(True),
             MemberAssignment.assignment_status == "confirmed",
             MemberAssignment.member_id == member_id,
             Assessment.active.is_(True),
         )
-        .order_by(SessionRecord.occurred_at)
+        .order_by(SessionRecord.occurred_at, SessionRecord.id)
     ).all()
     assigned_count = len(rows)
-    valid_ids = [record.id for record, assessment in rows if assessment.reliable]
+    valid_ids = [record.id for record, assessment, _ in rows if assessment.reliable]
     dimensions: dict[str, dict[str, int]] = {}
     observations_by_dimension: dict[str, list[Observation]] = {}
     observations_by_session: dict[int, dict[str, Observation]] = {}
@@ -437,7 +450,7 @@ def member_trend(db: Session, household_id: str, member_id: str, days: int) -> d
                 "baseline_status": "insufficient",
             })
     consecutive = 0
-    for record, assessment in reversed(rows):
+    for record, assessment, _ in reversed(rows):
         if not assessment.reliable:
             continue
         shape = db.scalar(select(Observation.value).where(
@@ -461,22 +474,25 @@ def member_trend(db: Session, household_id: str, member_id: str, days: int) -> d
             MemberAssignment.member_id == member_id,
             Assessment.active.is_(True),
             Assessment.reliable.is_(True),
+            *([SessionRecord.occurred_at <= now] if bounded else []),
         )
     ) or 0
     baseline_ready = all_time_valid >= required_baseline_samples
 
     week_count = min(12, max(1, (days + 6) // 7))
-    current_week_start = (
-        datetime.now(timezone.utc) - timedelta(days=datetime.now(timezone.utc).weekday())
-    ).date()
+    calendar_now = now.astimezone(calendar_timezone)
+    current_week_start = (calendar_now - timedelta(days=calendar_now.weekday())).date()
     weekly_buckets = {
         current_week_start - timedelta(weeks=offset): {
             "assigned_sessions": 0, "valid_sessions": 0, "shapes": {},
         }
         for offset in range(week_count)
     }
-    for record, assessment in rows:
-        week_start_date = (record.occurred_at - timedelta(days=record.occurred_at.weekday())).date()
+    for record, assessment, _ in rows:
+        record_time = record.occurred_at
+        if bounded:
+            record_time = record_time.replace(tzinfo=record_time.tzinfo or timezone.utc).astimezone(calendar_timezone)
+        week_start_date = (record_time - timedelta(days=record_time.weekday())).date()
         bucket = weekly_buckets.get(week_start_date)
         if bucket is None:
             continue
@@ -538,7 +554,7 @@ def member_trend(db: Session, household_id: str, member_id: str, days: int) -> d
             "current_shape": current_shape,
             "message": f"{change_message} 这只表示时间上的变化，不证明由某项建议导致。",
         }
-    return {
+    result = {
         "household_id": household_id,
         "member_id": member_id,
         "period_days": days,
@@ -563,3 +579,34 @@ def member_trend(db: Session, household_id: str, member_id: str, days: int) -> d
         "weekly_series": weekly_series,
         "latest_change": latest_change,
     }
+    if bounded:
+        result["reliable_days"] = len({
+            record.occurred_at.replace(tzinfo=record.occurred_at.tzinfo or timezone.utc)
+            .astimezone(calendar_timezone).date()
+            for record, assessment, _ in rows if assessment.reliable
+        })
+        # Include identities and versions, not just aggregates: a correction or
+        # reassessment may leave the count unchanged but invalidate the snapshot.
+        source = {
+            "records": [{
+                "id": record.id, "occurred_at": record.occurred_at.isoformat(),
+                "payload_hash": record.payload_hash, "quality": record.quality,
+                "assignment": [assignment.id, assignment.version, assignment.member_id],
+                "assessment": [assessment.id, assessment.version, assessment.status,
+                               assessment.reliable, assessment.risk_level,
+                               assessment.policy_version, assessment.reasons],
+            } for record, assessment, assignment in rows],
+            "observations": [{
+                "session_id": item.session_id, "dimension": item.dimension,
+                "value": item.value, "confidence": item.confidence,
+                "missing_reason": item.missing_reason, "source": item.source,
+                "model_version": item.model_version, "extra": item.extra,
+            } for item in db.scalars(select(Observation).where(
+                Observation.session_id.in_([record.id for record, _, _ in rows]),
+            ).order_by(Observation.session_id, Observation.dimension)).all()],
+            "baseline_progress": result["baseline_progress"],
+        }
+        result["source_fingerprint"] = hashlib.sha256(json.dumps(
+            source, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+        ).encode()).hexdigest()
+    return result

@@ -14,9 +14,10 @@ from app.service import AuthContext
 
 
 AUTH = AuthContext(user_id="u_owner", role="owner", household_id="hh_001")
-FALLBACK = "本周有 4 次可靠记录，每周频率约 4.0 次。"
+FALLBACK = "本周已覆盖 2 天，共 4 次可靠记录。"
 RECOMMENDATIONS = ["保持规律饮水与作息", "如连续异常或不适加重，请咨询医生"]
 TREND = {
+    "reliable_days": 2, "assigned_sessions": 5,
     "valid_sessions": 4, "valid_sample_coverage": 0.8,
     "frequency_per_week": 4.0, "consecutive_abnormal": 0,
     "insufficient_coverage": False,
@@ -35,7 +36,7 @@ def isolated_weekly_provider(monkeypatch):
     )
     monkeypatch.setattr(agent, "settings", test_settings)
     monkeypatch.setattr(weekly_reports, "settings", test_settings)
-    monkeypatch.setattr(weekly_reports, "member_trend", lambda *args: deepcopy(TREND))
+    monkeypatch.setattr(weekly_reports, "member_trend", lambda *args, **kwargs: deepcopy(TREND))
 
     def unexpected_network(*args, **kwargs):
         pytest.fail("Weekly report tests must not make a real network request")
@@ -101,6 +102,9 @@ def test_weekly_default_medical_reply_is_bounded_patient_text_with_safe_sources(
     assert agent.REPORT_EXPLANATION_RULES in context["software_constraints_and_authorized_context"][0]
     weekly_context = json.loads(context["user_input"])
     assert weekly_context["current_session"]["facts"]["frequency_per_week"] == 4.0
+    assert weekly_context["current_session"]["facts"]["reliable_days"] == 2
+    assert "source_fingerprint" not in weekly_context["current_session"]["facts"]
+    assert "revision" not in weekly_context["current_session"]["facts"]
     assert weekly_context["current_session"]["recommendations"] == RECOMMENDATIONS
     assert weekly_context["baseline_progress"]["status"] == "collecting"
     summary = report["summary"]

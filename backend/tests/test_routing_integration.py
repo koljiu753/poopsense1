@@ -255,7 +255,9 @@ def test_weekly_summary_uses_its_own_route_and_actual_model_version(client, norm
     monkeypatch.setattr(weekly, "settings", config)
     calls, _ = fake_providers(monkeypatch)
     for index in range(3):
-        upload_and_claim(client, normal_payload, f"routing_weekly_{index}", hours_ago=index + 1)
+        # These samples must belong to the current Beijing week, including a
+        # test run just after Monday midnight. Window boundaries are tested apart.
+        upload_and_claim(client, normal_payload, f"routing_weekly_{index}", hours_ago=0)
     response = client.post("/api/v1/households/hh_001/members/m_001/weekly-reports", headers=OWNER)
     assert response.status_code == 200
     body = response.json()

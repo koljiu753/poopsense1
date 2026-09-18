@@ -1,5 +1,11 @@
 # PoopSense Backend
 
+## 周报窗口与更新（2026-09-18）
+
+周报按北京时间自然周统计，截止于请求时刻，排除未来观测；其他趋势查询保留原滚动窗口。`facts.schema_version=2`提供`timezone`、`data_as_of`、`generated_at`、`reliable_days`、`assigned_sessions`与`revision`，原`coverage`仍为可靠记录占已归属记录的比例。
+
+源数据指纹相同则复用；新增、认领纠正或重评后更新同一report_id，保留原created_at，以generated_at表示最新生成。新审计保存前后快照和实际模型来源，首次生成才通知。数据库条件更新/唯一约束在模型调用前协调竞争，繁忙返回409/WEEKLY_REPORT_BUSY；不是进程内锁，也不承诺高并发性能。临时SQLite与真实设备缓存的既有限制仍在。详见[本轮更新](../docs/releases/2026-09-18-weekly-pet.md)。
+
 ## 多模型接入与自动选模（2026-09-13）
 
 根目录`配置模型.ps1`提供本地交互接入和连接检查；`enable-auto`开启按任务选模。DeepSeek处理日常、产品、记录解释及周报，百川M3-Plus处理健康知识，单次传感报告和后台动作继续使用规则。各请求使用独立配置快照，缺配置或调用失败不跨供应商重试。详细配置、扩展边界和验证说明见[多模型接入与路由](../docs/model-routing.md)。

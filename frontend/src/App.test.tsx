@@ -1614,7 +1614,7 @@ describe("PoopSense core UI", () => {
     await screen.findByRole("button", { name: /了解如何开始/ });
     await user.click(screen.getAllByRole("button", { name: /健康/ })[0]);
     await user.click(screen.getByRole("button", { name: "趋势" }));
-    await user.click(screen.getByText("本周健康周报", { selector: "summary b" }));
+    await user.click(screen.getByText("一周回顾", { selector: "summary b" }));
     await user.click(await screen.findByRole("button", { name: "生成本周周报" }));
     expect(mocked.generateWeeklyReport).toHaveBeenCalledWith(expect.anything(), "m_001");
     expect(await screen.findByText(/本周可靠样本不足/)).toBeInTheDocument();
@@ -1675,6 +1675,75 @@ describe("PoopSense core UI", () => {
     await user.click(screen.getByRole("button", { name: "今天打卡" }));
     expect(mocked.checkInPet).toHaveBeenCalledWith(expect.anything(), "m_001");
     expect(await screen.findByRole("button", { name: "今天已打卡" })).toBeDisabled();
+  });
+
+  it("changes the visible pet appearance only after a successful skin save and keeps it on failure", async () => {
+    const original = await mocked.pet.getMockImplementation()!(null as never, "m_001");
+    const unlocked = { ...original, unlocked_skins: ["classic", "blue_wave", "pop_star"] as typeof original.unlocked_skins };
+    mocked.pet.mockResolvedValue(unlocked);
+    let finishSave!: (value: typeof original) => void;
+    mocked.updatePet.mockImplementationOnce(() => new Promise(resolve => { finishSave = resolve; }));
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("button", { name: /了解如何开始/ });
+    await user.click(screen.getAllByRole("button", { name: /广场$/ })[0]);
+    await user.click(await screen.findByText("我的小屋", { selector: "summary b" }));
+    const avatar = () => screen.getByRole("img", { name: "当前选中的 Agent" });
+    expect(avatar()).toHaveAttribute("data-skin", "classic");
+    await user.click(screen.getByRole("button", { name: "蓝色波浪" }));
+    expect(avatar()).toHaveAttribute("data-skin", "classic");
+    expect(screen.queryByText("宠物档案已保存。")).not.toBeInTheDocument();
+    const blue = { ...unlocked, selected_skin: "blue_wave" as const };
+    mocked.pet.mockResolvedValue(blue);
+    await act(async () => { finishSave(blue); });
+    expect(avatar()).toHaveAttribute("data-skin", "blue_wave");
+    expect(screen.getByRole("img", { name: "小噗，好奇观察中" })).toHaveAttribute("data-skin", "blue_wave");
+    expect(document.querySelector(".island-agent.is-mine .pet-avatar")).toHaveAttribute("data-skin", "blue_wave");
+    expect(screen.getByRole("button", { name: "蓝色波浪" })).toHaveAttribute("aria-pressed", "true");
+    mocked.updatePet.mockRejectedValueOnce(new ApiError(503, "SAVE_FAILED"));
+    await user.click(screen.getByRole("button", { name: "波普明星" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("加载失败，请稍后再试。");
+    expect(avatar()).toHaveAttribute("data-skin", "blue_wave");
+    expect(screen.getByRole("button", { name: "波普明星" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByText("宠物档案已保存。")).not.toBeInTheDocument();
+  });
+
+  it("keeps a peer neutral instead of attributing the owner's saved skin to them", async () => {
+    const original = await mocked.pet.getMockImplementation()!(null as never, "m_001");
+    mocked.pet.mockResolvedValue({ ...original, selected_skin: "pop_star", unlocked_skins: ["classic", "pop_star"] });
+    mocked.communityPosts.mockResolvedValue([{ post_id: "public_skin_test", agent_alias: "小林的 Agent", topic: "hydration", content: "公开问候", status: "active", created_at: "2026-09-18T08:00:00Z", can_withdraw: false }]);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("button", { name: /了解如何开始/ });
+    await user.click(screen.getAllByRole("button", { name: /广场$/ })[0]);
+    await screen.findByRole("button", { name: "今天打卡" });
+    expect(screen.getByRole("img", { name: "当前选中的 Agent" })).toHaveAttribute("data-skin", "pop_star");
+    await user.click(screen.getByRole("button", { name: "查看小林的 Agent" }));
+    expect(screen.getByRole("img", { name: "当前选中的 Agent" })).toHaveAttribute("data-skin", "neutral");
+    expect(screen.getByText("伙伴使用通用形象；未获取对方的皮肤或健康状态。")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "回到我的 Agent" }));
+    expect(screen.getByRole("img", { name: "当前选中的 Agent" })).toHaveAttribute("data-skin", "pop_star");
+  });
+
+  it("does not carry a pending pet skin save into another member", async () => {
+    const original = await mocked.pet.getMockImplementation()!(null as never, "m_001");
+    mocked.pet.mockImplementation(async (_config, memberId) => memberId === "m_001"
+      ? { ...original, unlocked_skins: ["classic", "blue_wave"] }
+      : { ...original, member_id: "m_002", name: "家人的伙伴" });
+    let finishSave!: (value: typeof original) => void;
+    mocked.updatePet.mockImplementationOnce(() => new Promise(resolve => { finishSave = resolve; }));
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("button", { name: /了解如何开始/ });
+    await user.click(screen.getAllByRole("button", { name: /广场$/ })[0]);
+    await user.click(await screen.findByText("我的小屋", { selector: "summary b" }));
+    await user.click(screen.getByRole("button", { name: "蓝色波浪" }));
+    await act(async () => { window.location.hash = "#/social?member=m_002"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
+    await screen.findByRole("heading", { name: "家人的伙伴的 Agent" });
+    expect(screen.getByRole("img", { name: "当前选中的 Agent" })).toHaveAttribute("data-skin", "classic");
+    await act(async () => { finishSave({ ...original, selected_skin: "blue_wave" }); });
+    expect(screen.getByRole("img", { name: "当前选中的 Agent" })).toHaveAttribute("data-skin", "classic");
+    expect(screen.queryByText("宠物档案已保存。")).not.toBeInTheDocument();
   });
 
   it("publishes to the Agent community only after explicit per-post consent", async () => {
@@ -1970,9 +2039,9 @@ describe("PoopSense core UI", () => {
     await user.click(screen.getAllByRole("button", { name: /健康$/ })[0]);
     expect(await screen.findByRole("region", { name: "最近记录" })).toBeVisible();
     expect(screen.getByRole("button", { name: /^记录/ })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText("本周健康周报", { selector: "summary b" })).not.toBeVisible();
+    expect(screen.getByText("一周回顾", { selector: "summary b" })).not.toBeVisible();
     await user.click(screen.getByRole("button", { name: "趋势" }));
-    expect(screen.getByText("本周健康周报", { selector: "summary b" })).toBeVisible();
+    expect(screen.getByText("一周回顾", { selector: "summary b" })).toBeVisible();
     expect(screen.getByText("让 Agent 更懂你", { selector: "summary b" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "最近记录" })).not.toBeInTheDocument();
   });

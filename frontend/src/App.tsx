@@ -3,6 +3,8 @@ import ComposeDialog from "./ComposeDialog";
 import NewRecordNotice from "./NewRecordNotice";
 import ChatMessageContent from "./ChatMessageContent";
 import ChatComposer, { ChatWaiting } from "./ChatComposer";
+import PetAvatar, { PET_SKINS, petSkinLabel } from "./PetAvatar";
+import WeeklyReportPanel from "./WeeklyReportPanel";
 import { useAppNavigation, type View, type HealthSection } from "./useAppNavigation";
 import { SensorSimulator } from "./SensorSimulator";
 import {
@@ -31,7 +33,6 @@ import {
   type RawDataAuthorization,
   type Trend,
   type TrendDimension,
-  type WeeklyHealthReport,
 } from "./api";
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -1488,8 +1489,8 @@ function Health({
       </div>
       <TrendMap trend={trend} />
       <details className="progressive-panel">
-        <summary><b>本周健康周报</b><span>把可靠记录整理成一页结论</span></summary>
-        <WeeklyReportPanel config={config} memberId={selected} />
+        <summary><b>一周回顾</b><span>记到了几天，接下来关注什么</span></summary>
+        <WeeklyReportPanel config={config} memberId={selected} friendlyError={friendlyError} />
       </details>
       <details className="progressive-panel">
         <summary><b>让 Agent 更懂你</b><span>健康档案与可修改记忆</span></summary>
@@ -1655,64 +1656,6 @@ function ActionFollowupPanel({ config, memberId, refreshKey, sessions, onOpenRep
           </details>
         </div>
       ) : null}
-    </article>
-  );
-}
-
-function WeeklyReportPanel({ config, memberId }: { config: AppConfig; memberId: string }) {
-  const [reports, setReports] = useState<WeeklyHealthReport[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    setError("");
-    api.weeklyReports(config, memberId)
-      .then((result) => { if (active) setReports(result); })
-      .catch((caught) => { if (active) setError(friendlyError(caught)); });
-    return () => { active = false; };
-  }, [config, memberId]);
-
-  async function generateReport() {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      const report = await api.generateWeeklyReport(config, memberId);
-      setReports((current) => [report, ...current.filter((item) => item.report_id !== report.report_id)]);
-    } catch (caught) {
-      setError(friendlyError(caught));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const latest = reports[0];
-  return (
-    <article className="weekly-report-panel" aria-label="健康周报">
-      <div className="weekly-report-head">
-        <div className="card-title"><span>WEEKLY</span><h2>健康周报</h2></div>
-        <button type="button" onClick={generateReport} disabled={busy}>
-          {busy ? "生成中…" : latest ? "刷新本周周报" : "生成本周周报"}
-        </button>
-      </div>
-      {error ? <p className="form-error" role="alert">{error}</p> : null}
-      {!latest ? <p className="muted">还没有周报。生成后会把可靠事实、建议与 Agent 解释保存在一起。</p> : (
-        <div className="weekly-report-body">
-          <div>
-            <small>{latest.period_start} — {latest.period_end}</small>
-            <strong>{latest.status === "ready" ? "本周洞察" : "样本积累中"}</strong>
-            <p>{latest.summary}</p>
-          </div>
-          <div className="weekly-facts" aria-label="周报事实">
-            <span><b>{latest.facts.valid_sessions}</b>可靠记录</span>
-            <span><b>{Math.round(latest.facts.coverage * 100)}%</b>有效覆盖</span>
-            <span><b>{latest.facts.consecutive_abnormal}</b>连续异常</span>
-          </div>
-          <ul>{latest.recommendations.map((item) => <li key={item}>{item}</li>)}</ul>
-          <small>依据 {latest.policy_version} · {latest.model_version}</small>
-        </div>
-      )}
     </article>
   );
 }
@@ -1979,12 +1922,6 @@ function InboxPanel({
     </article>
   );
 }
-const PET_SKINS: { id: PetSnapshot["selected_skin"]; label: string }[] = [
-  { id: "classic", label: "经典奶油" },
-  { id: "blue_wave", label: "蓝色波浪" },
-  { id: "pop_star", label: "波普明星" },
-];
-
 function Social({ config, memberId, active }: { config: AppConfig; memberId: string; active: boolean }) {
   const socialRef = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
@@ -2010,10 +1947,11 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
     setBusyState(value);
   }, []);
   const applyPetSnapshot = useCallback((next: PetSnapshot, previousName = serverPetName.current) => {
+    if (next.member_id !== memberId) return;
     serverPetName.current = next.name;
     setPet(next);
     setPetName(current => current === previousName ? next.name : current);
-  }, []);
+  }, [memberId]);
   useEffect(() => {
     if (!active || !memberId || busy) return;
     let current = true;
@@ -2045,12 +1983,14 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
   async function savePet(selectedSkin = pet?.selected_skin) {
     if (!memberId || !pet || !selectedSkin || !petName.trim() || writing.current) return;
     setBusy(true);
+    setNotice("");
     try {
       const updated = await api.updatePet(config, memberId, petName.trim(), selectedSkin);
+      if (updated.member_id !== memberId) throw new Error("PET_MEMBER_MISMATCH");
       applyPetSnapshot(updated, petName);
       setNotice("宠物档案已保存。");
     } catch (caught) {
-      setNotice(friendlyError(caught));
+      setNotice(`宠物档案未保存，仍保持原来的外观。${friendlyError(caught)}`);
     } finally {
       setBusy(false);
     }
@@ -2176,7 +2116,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
                   aria-label={`查看${agent.alias}`}
                 >
                   <span className="agent-speech">{agent.mine ? "我在这里" : "···"}</span>
-                  <img src="/poop-island-agent-v1.webp" alt="" />
+                  <PetAvatar skin={agent.mine ? pet?.selected_skin : undefined} size="map" />
                   <small>{agent.alias}</small>
                 </button>
               ))}
@@ -2188,23 +2128,24 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
           </div>
 
           <article className="island-focus-card" aria-label="便便宠物和皮肤图鉴">
-            <img src="/poop-island-agent-v1.webp" alt="当前选中的 Agent" />
+            <PetAvatar skin={selectedAgent.mine ? pet?.selected_skin : undefined} label="当前选中的 Agent" />
             <div>
               <small>{selectedAgent.mine ? "我的伙伴" : "岛上遇见"}</small>
               <h2>{selectedAgent.alias}</h2>
               <p><i /> {selectedAgent.status}</p>
               {selectedAgent.mine && pet ? (
                 <>
-                  <span>{petMoodLabel(pet.mood)} · {petStageLabel(pet.stage)} · 连续 {pet.streak_days} 天</span>
+                  <span>{petSkinLabel(pet.selected_skin)} · {petMoodLabel(pet.mood)}</span>
+                  <span>{petStageLabel(pet.stage)} · 连续到访 {pet.streak_days} 天</span>
                   <em>{pet.health_basis === "insufficient" ? "可靠样本不足，宠物保持探索状态" : "状态来自已放行的可靠健康摘要"}</em>
                 </>
-              ) : <span>只会看到对方主人主动公开的岛上状态</span>}
+              ) : <span>{selectedAgent.mine ? "正在读取你的伙伴形象…" : "伙伴使用通用形象；未获取对方的皮肤或健康状态。"}</span>}
             </div>
             {selectedAgent.mine && pet ? (
               <button disabled={busy || pet.checked_in_today} onClick={() => void checkIn()}>
                 {pet.checked_in_today ? "今天已打卡" : "今天打卡"}
               </button>
-            ) : <button disabled={busy} onClick={() => void greetSelectedAgent()}>去打招呼</button>}
+            ) : selectedAgent.mine ? <button disabled>正在读取伙伴…</button> : <button disabled={busy} onClick={() => void greetSelectedAgent()}>去打招呼</button>}
           </article>
         </main>
 
@@ -2218,7 +2159,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
               aria-label={`${islandAgents[0].alias} · 代表当前成员`}
               onClick={() => setSelectedAgentId("mine")}
             >
-              <img src="/poop-island-agent-v1.webp" alt="" />
+              <PetAvatar skin={pet?.selected_skin} size="mini" />
               <span><b>{islandAgents[0].alias}</b><small><i /> 代表当前成员</small></span>
             </button>
           </section>
@@ -2291,7 +2232,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
       <details className="progressive-panel social-progressive island-pet-settings">
         <summary><b>我的小屋</b><span>名字、皮肤和陪伴状态</span></summary>
         {pet ? <div className="island-pet-editor">
-          <img src="/poop-island-agent-v1.webp" alt={`${pet.name}，${petMoodLabel(pet.mood)}`} />
+          <PetAvatar skin={pet.selected_skin} size="room" label={`${pet.name}，${petMoodLabel(pet.mood)}`} />
           <label>伙伴名字<input aria-label="宠物名字" value={petName} onChange={(event) => setPetName(event.target.value)} /></label>
           <div className="pet-skins" aria-label="宠物皮肤">
             {PET_SKINS.map((skin) => {
@@ -2300,6 +2241,7 @@ function Social({ config, memberId, active }: { config: AppConfig; memberId: str
             })}
           </div>
           <button disabled={busy || !petName.trim()} onClick={() => void savePet()}>保存名字</button>
+          <p className="pet-appearance-note">当前穿着：{petSkinLabel(pet.selected_skin)}。选择后保存成功才会换装；外观和到访打卡不代表健康好坏。</p>
         </div> : <p>正在叫醒你的 Agent…</p>}
       </details>
       {notice && !composeOpen && (

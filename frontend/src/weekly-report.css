@@ -1,0 +1,32 @@
+.experience .health-page .week-review { margin: 0; padding: 18px; border: 0; border-top: 2px solid var(--ink); border-radius: 0; box-shadow: none; background: var(--cream); }
+.experience .week-review .weekly-report-head { gap: 12px; }
+.experience .week-review .weekly-report-head h2 { margin: 2px 0 0; font-size: 24px; }
+.experience .week-review .weekly-report-head button { min-height: 44px; font-size: 14px; padding: 9px 12px; background: var(--yellow); border-width: 2px; }
+.experience .week-review :is(.week-review-calendar,.week-review-explanation,.week-review-asof,.week-review-details) { font-size: 12px; line-height: 1.7; color: var(--muted); }
+.experience .week-review .week-review-calendar { margin: 12px 0 0; }
+.experience .week-review .weekly-report-body { border-top: 1px dashed var(--ink); gap: 12px; margin-top: 12px; padding-top: 14px; }
+.experience .week-review .week-review-intro strong { font-size: 21px; line-height: 1.5; }
+.experience .week-review .week-review-intro > p { font-size: 14px; line-height: 1.8; }
+.experience .week-review .week-review-intro > small { color: var(--blue); font-size: 12px; }
+.experience .week-review .week-review-old { padding: 8px 10px; background: #fff1b8; border-radius: 6px; }
+.experience .week-review .weekly-facts { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.experience .week-review .weekly-facts > span { min-width: 0; gap: 6px; padding: 12px 8px; border-radius: 10px; font-size: 12px; line-height: 1.5; }
+.experience .week-review .weekly-facts > span:first-child { background: var(--yellow); }
+.experience .week-review .weekly-facts b { font-size: 25px; white-space: nowrap; }
+.experience .week-review .weekly-facts b > small { font-size: 11px; font-weight: 500; }
+.experience .week-review .week-review-next { padding: 12px 14px; border: 2px solid var(--ink); border-radius: 12px; background: white; }
+.experience .week-review .week-review-next h3 { margin: 0 0 8px; font-size: 14px; }
+.experience .week-review .week-review-next ul { padding-left: 18px; font-size: 14px; line-height: 1.8; }
+.experience .week-review .week-review-attention { border-left: 4px solid var(--pink); padding: 8px 10px; background: #ffedf3; font-size: 14px; line-height: 1.7; }
+.experience .week-review .week-review-details { border-top: 1px dashed var(--ink); padding-top: 2px; overflow-wrap: anywhere; }
+.experience .week-review .week-review-details summary { min-height: 44px; padding: 12px 0; color: var(--ink); font-weight: 700; }
+.experience .week-review .week-review-details p { margin-bottom: 8px; }
+.experience .week-review :is(.week-review-notice,.week-review-retry) { font-size: 14px; line-height: 1.6; }
+.experience .week-review .week-review-notice { color: var(--blue); }
+.experience .week-review .week-review-retry { min-height: 44px; }
+@media (max-width: 360px) {
+  .experience .health-page .week-review { padding: 14px 10px; }
+  .experience .week-review .weekly-facts { gap: 5px; }
+  .experience .week-review .weekly-facts > span { padding: 10px 5px; font-size: 11px; }
+  .experience .week-review .weekly-facts b { font-size: 21px; }
+}

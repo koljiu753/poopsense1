@@ -406,6 +406,13 @@ export type WeeklyHealthReport = {
   period_end: string;
   status: "insufficient" | "ready";
   facts: {
+    schema_version?: number;
+    timezone?: string;
+    data_as_of?: string;
+    generated_at?: string;
+    reliable_days?: number;
+    assigned_sessions?: number;
+    revision?: number;
     valid_sessions: number;
     coverage: number;
     frequency_per_week: number;
