@@ -20,6 +20,8 @@
 - 2026-09-18本地完整后端396/396通过（158.07秒）、前端128/128通过，TypeScript与生产构建通过。后端运行隔离数据库、阻断真实网络及本地密钥读取。
 - 新周报测试覆盖北京时间自然周边界、未来排除、天数与占比、更新与旧版升级、权限、幂等、通知和并发；慢旧请求不能覆盖新快照。初轮发现并修复SQLite重读时间缺时区问题，并纠正过宽的测试故障注入，随后定向及完整回归通过。
 - 独立Chromium的19项交互检查通过，320/390宽无横溢出、无捕获JS异常；三种外观可区分，保存失败、键盘重试、伙伴中性形象、周报新旧数据和跨成员响应均覆盖。此阶段全部API使用mock，没有真实写入或模型调用，不属于微信真机验收。
-- GitHub和公网结果在发布后补充。
+- 源码[`e09c8e7`](https://github.com/koljiu753/poopsense1/commit/e09c8e710cc9fa0774fb0be6d1c04adf9a645ee0)已推送main，[完整CI](https://github.com/koljiu753/poopsense1/actions/runs/35322990421)成功。后端部署`dpl_9Teay1fsd16jUNkvVfpKpdu79Xud`、前端`dpl_8UJCxSBmTWhj3o7dpgRDPs697qW1`均READY，[原在线入口](https://poopsense-reader-0912.vercel.app/)不变。
+- 16:11公网资源HTTP200，JS `index-Bm_fpzrL.js`/CSS `index-D2WwUW4E.css`与本地最终构建哈希一致。两次真实周报POST分别0.453/0.516秒，周期为9月14–20日、北京时间、schema_version=2；1天1条可靠记录，状态为样本不足、policy-engine。两次report_id、revision及截至时间一致，未变化复用成功。只使用既有虚构演示记录，没有上传新的健康数据；新增数据后的更新由隔离测试覆盖。
+- 已部署前端再次通过19项窄屏交互检查；这部分仍使用浏览器API fixture，与上述真实周报接口验证分别记录，不能当成公网皮肤保存或长期历史持久化验收。
 
 仍为虚构数据演示，长期持久化和微信真机验证尚未完成。本轮不新增真实硬件能力，也不以角色或周报表现证明医疗有效性。
