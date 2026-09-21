@@ -26,6 +26,10 @@ def start_chat_run(db: Session, *, household_id: str, member_id: str,
         policy_version=policy_version, authorization_basis=authorization_basis,
         result={}, error=None, created_at=now, updated_at=now, completed_at=None,
     )
+    # Scalar FK IDs do not establish ORM relationship ordering. Persist the run
+    # before its children within the caller's transaction, without committing.
+    db.add(run)
+    db.flush([run])
     coordinator = AgentStep(
         run_id=run.id, step_index=1, agent_name="main_agent",
         skill_name="route_request", skill_version="1.0.0", status="succeeded",
@@ -48,7 +52,7 @@ def start_chat_run(db: Session, *, household_id: str, member_id: str,
         authorization_basis=authorization_basis, status="accepted",
         created_at=now, accepted_at=now,
     )
-    db.add_all([run, coordinator, specialist, handoff])
+    db.add_all([coordinator, specialist, handoff])
     run.current_step = 2
     db.flush()
     return run, specialist

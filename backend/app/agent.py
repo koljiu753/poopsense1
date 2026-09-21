@@ -520,6 +520,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
             status="active", created_at=now, updated_at=now,
         )
         db.add(conversation)
+        db.flush([conversation])
     user_message = AgentMessage(
         conversation_id=conversation.id, role="event" if session_report else "user", content=text,
         model_version=None, authorization_basis=basis, policy_version=POLICY_VERSION,

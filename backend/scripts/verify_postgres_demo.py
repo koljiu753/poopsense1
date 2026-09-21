@@ -76,6 +76,33 @@ def child_read():
     print('Fresh application process read the claimed test record.', flush=True)
 
 
+def verify_chat_foreign_keys(session_factory):
+    """Run real PostgreSQL chat transactions with only model output stubbed."""
+    from app.agent import chat
+    from app.models import AgentConversation, AgentHandoff, AgentMessage, AgentRun, AgentStep
+    from app.service import AuthContext
+
+    calls = []
+    with session_factory() as db:
+        assert db.bind.dialect.name == 'postgresql'
+        assert db.scalar(text('SHOW session_replication_role')) == 'origin'
+        assert db.scalar(text("SELECT count(*) FROM pg_constraint WHERE conrelid='agent_handoffs'::regclass "
+                              "AND contype='f' AND confrelid='agent_runs'::regclass AND convalidated")) == 1
+        result = chat(db, AuthContext('u_owner', 'owner', 'hh_001'), 'm_001', '你好，介绍一下自己',
+                      model_caller=lambda messages: calls.append(messages) or '固定回归回复，仅验证数据库事务。')
+        run_id = result['run'].id
+        conversation_id = result['conversation'].id
+        message_id = result['message'].id
+    assert len(calls) == 1
+    with session_factory() as db:
+        assert db.get(AgentRun, run_id).status == 'completed'
+        assert db.get(AgentConversation, conversation_id) is not None
+        assert db.get(AgentMessage, message_id).conversation_id == conversation_id
+        assert len(db.scalars(select(AgentStep).where(AgentStep.run_id == run_id)).all()) == 2
+        assert len(db.scalars(select(AgentHandoff).where(AgentHandoff.run_id == run_id)).all()) == 1
+    return 'passed'
+
+
 def main():
     if sys.argv[1:] == ['--child-read']:
         child_read()
@@ -193,6 +220,7 @@ def main():
             visible = client.get(private_inbox, headers={'X-Household-Key': private_household_key})
             assert visible.status_code == 200 and len(visible.json()) == 1
         application.settings = replace(application.settings, bootstrap_demo_device=False)
+        chat_fk = verify_chat_foreign_keys(SessionLocal)
         engine.dispose()
         subprocess.run([sys.executable, str(Path(__file__).resolve()), '--child-read'], check=True, timeout=60)
 
@@ -239,6 +267,7 @@ def main():
         from scripts.verify_postgres_backup import verify_backup_restore
         backup = verify_backup_restore(admin, engine, schema, container) if container else {'status': 'not_run'}
         print(json.dumps({'postgres_migrations': 'passed', 'upload_claim_fresh_process': 'passed',
+                          'chat_fk': chat_fk,
                           'same_payload_race': same, 'different_payload_race': different,
                           'backup_restore': backup}), flush=True)
     finally:
