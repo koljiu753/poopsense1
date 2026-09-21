@@ -1,5 +1,13 @@
 # PoopSense Linux / 七牛云部署
 
+## 2026-09-22 当前公开入口
+
+用户购买并此前确认的域名为 [poopsense.org](https://poopsense.org/)。9月21日23:57已将其登记到Vercel的`poopsense-reader-0912`项目，verified=true，别名指向Reader部署；不再由后端项目的旧手工别名决定页面版本。原 [Reader地址](https://poopsense-reader-0912.vercel.app/) 保留可访问，API仍同域代理到既有live-demo后端和Neon持久化测试库。
+
+原Spaceship名称服务器与根域A记录没有修改，本次未迁移到下面的Linux/七牛编排。实际两个域名的页面资源、设备回执、家庭记录与OpenAPI一致；当前使用不带`www`的域名，`www.poopsense.org`尚无DNS记录。换域名后浏览器会话授权需重新输入，不通过URL传递密钥。
+
+下面9月7日的部署、SQLite及域名绑定描述为历史状态。最新验收见[Reader域名与记录查询迭代](../../docs/releases/2026-09-22-reader-domain.md)，运行范围仍为demo，未宣称正式生产上线。
+
 这套编排把 Web、FastAPI、PostgreSQL 和 outbox worker 分成四个服务。数据写入
 Docker volume，Agent 主动行动由独立常驻 worker 消费，适合七牛云或普通 Linux 云主机。
 

@@ -870,6 +870,46 @@ describe("PoopSense core UI", () => {
     expect(screen.queryByRole("region", { name: "形状原始观测" })).not.toBeInTheDocument();
   });
 
+  it.each([true, false])("only refreshes the looked-up record after the claim actually succeeds: %s", async succeeds => {
+    window.history.replaceState(null, "", "/#/health/records?member=m_001");
+    const pending = {
+      session_id: "ses_1", device_id: "test_device", correlation_id: "test_correlation",
+      received_at: "2026-09-21T08:00:00Z", data_kind: "simulated" as const,
+      assignment_status: "pending_claim", assignment_version: 1, member_id: null,
+    };
+    mocked.sessionById.mockResolvedValue(pending);
+    let accept!: () => void;
+    let reject!: (reason: unknown) => void;
+    mocked.claim.mockImplementationOnce(() => new Promise((resolve, fail) => { accept = () => resolve({}); reject = fail; }));
+    const user = userEvent.setup();
+    render(<App />);
+    const search = await screen.findByLabelText("查找记录 ID");
+    await user.type(search, pending.session_id);
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    const card = await screen.findByRole("article", { name: "记录查找结果" });
+    expect(card).toHaveTextContent("待认领");
+    await user.selectOptions(screen.getByLabelText("这是谁的记录？"), "m_001");
+    await user.click(screen.getByRole("button", { name: "确认归属" }));
+    expect(mocked.sessionById).toHaveBeenCalledTimes(1);
+    expect(card).toHaveTextContent("待认领");
+    if (succeeds) {
+      mocked.sessionById.mockResolvedValueOnce({ ...pending, assignment_status: "confirmed", assignment_version: 2, member_id: "m_001" });
+      mocked.inbox.mockResolvedValue([]);
+      await act(async () => { accept(); });
+      expect(await within(card).findByText("已归属：小风")).toBeVisible();
+      expect(mocked.sessionById).toHaveBeenCalledTimes(2);
+      expect(within(card).queryByRole("button", { name: "刷新待认领箱" })).not.toBeInTheDocument();
+    } else {
+      await act(async () => { reject(new ApiError(503, "claim unavailable")); });
+      expect(await screen.findByRole("alert")).toHaveTextContent("加载失败");
+      expect(mocked.sessionById).toHaveBeenCalledTimes(1);
+      expect(card).toHaveTextContent("待认领");
+    }
+    expect(screen.getByRole("article", { name: "记录查找结果" })).toBe(card);
+    expect(search).toHaveValue(pending.session_id);
+    expect(mocked.agentChat).not.toHaveBeenCalled();
+  });
+
   it("loads chat while the inbox is slow and discovers pending records without disturbing the reply or draft", async () => {
     window.history.replaceState(null, "", "/#/chat?member=m_001");
     let finishInitialInbox!: (value: Awaited<ReturnType<typeof api.inbox>>) => void;

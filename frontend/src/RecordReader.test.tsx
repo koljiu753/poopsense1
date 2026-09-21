@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError, type HouseholdSession } from "./api";
@@ -25,6 +25,13 @@ const sample: HouseholdSession = {
 };
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.members).mockResolvedValue(members); vi.mocked(api.sessionById).mockResolvedValue(sample); });
 afterEach(cleanup);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 
 describe("original observations", () => {
   it("shows partial hardware classifications and missing sensors without converting similarity or sampling into health facts", () => {
@@ -79,7 +86,7 @@ describe("authorized record lookup", () => {
     expect(await screen.findByText("已归属：测试成员")).toBeVisible();
   });
 
-  it.each([[403, "当前家庭授权无法查看"], [404, "当前家庭中未找到"], [409, "这个记录 ID 对应多个设备"]] as const)("removes old results when a lookup is rejected with %s", async (status, message) => {
+  it.each([[401, "当前家庭授权无法查看"], [403, "当前家庭授权无法查看"], [404, "当前家庭中未找到"], [409, "这个记录 ID 对应多个设备"]] as const)("removes old results when a lookup is rejected with %s", async (status, message) => {
     const user = userEvent.setup();
     render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} />);
     await user.type(screen.getByLabelText("查找记录 ID"), sample.session_id);
@@ -104,6 +111,162 @@ describe("authorized record lookup", () => {
     rerender(<RecordLookup config={{ ...config, householdKey: "changed-test-credential" }} members={members} onRefreshInbox={vi.fn()} />);
     expect(signal.aborted).toBe(true);
     await act(async () => { finish(sample); });
+    expect(screen.queryByRole("article", { name: "记录查找结果" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("查找记录 ID")).toHaveValue("");
+  });
+
+  it("retains the same details and keyboard focus through a slow refresh, a network failure and retry", async () => {
+    const user = userEvent.setup();
+    render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} />);
+    await user.type(screen.getByLabelText("查找记录 ID"), sample.session_id);
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    const card = await screen.findByRole("article", { name: "记录查找结果" });
+    const observations = card.querySelector("details")!;
+    await user.click(within(card).getByText(/原始观测与处理状态/));
+    expect(observations).not.toHaveAttribute("open");
+    const waiting = deferred<HouseholdSession>();
+    vi.mocked(api.sessionById).mockImplementationOnce(() => waiting.promise);
+    const refresh = screen.getByRole("button", { name: "刷新这条记录" });
+    await user.click(refresh);
+    expect(screen.getByRole("article", { name: "记录查找结果" })).toBe(card);
+    expect(screen.getByRole("status")).toHaveTextContent("正在更新，显示上次读取内容");
+    expect(refresh).toHaveFocus();
+    expect(refresh).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Enter}");
+    expect(api.sessionById).toHaveBeenCalledTimes(2);
+    await act(async () => { waiting.reject(new ApiError(503, "private upstream detail")); });
+    expect(screen.getByRole("article", { name: "记录查找结果" })).toBe(card);
+    expect(screen.getByRole("alert")).toHaveTextContent("更新未完成，以下仍是上次读取的内容");
+    expect(screen.getByRole("status")).not.toHaveTextContent("已完成");
+    expect(card).toHaveTextContent("待认领");
+    expect(screen.queryByText(/private upstream detail/)).not.toBeInTheDocument();
+    vi.mocked(api.sessionById).mockResolvedValueOnce({ ...sample, assignment_status: "confirmed", member_id: "test_member" });
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("已归属：测试成员")).toBeVisible();
+    expect(screen.getByRole("article", { name: "记录查找结果" })).toBe(card);
+    expect(observations).not.toHaveAttribute("open");
+    expect(refresh).toHaveFocus();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not retain record A when a new lookup for B fails", async () => {
+    const user = userEvent.setup();
+    render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} />);
+    const input = screen.getByLabelText("查找记录 ID");
+    await user.type(input, sample.session_id);
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    await screen.findByRole("article", { name: "记录查找结果" });
+    const waiting = deferred<HouseholdSession>();
+    vi.mocked(api.sessionById).mockImplementationOnce(() => waiting.promise);
+    await user.clear(input);
+    await user.type(input, "record_b");
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    expect(screen.queryByRole("article", { name: "记录查找结果" })).not.toBeInTheDocument();
+    await act(async () => { waiting.reject(new TypeError("Network failed")); });
+    expect(screen.queryByRole("article", { name: "记录查找结果" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).not.toHaveTextContent("上次读取");
+    expect(input).toHaveValue("record_b");
+  });
+
+  it("revalidates a successful claim even if the initial lookup is still in flight", async () => {
+    const beforeClaim = deferred<HouseholdSession>();
+    const afterClaim = deferred<HouseholdSession>();
+    vi.mocked(api.sessionById).mockImplementationOnce(() => beforeClaim.promise).mockImplementationOnce(() => afterClaim.promise);
+    const user = userEvent.setup();
+    const { rerender } = render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} />);
+    await user.type(screen.getByLabelText("查找记录 ID"), sample.session_id);
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    const oldSignal = vi.mocked(api.sessionById).mock.calls[0][2]!;
+    rerender(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} updatedRecord={{ config, sessionId: sample.session_id }} />);
+    expect(oldSignal.aborted).toBe(true);
+    expect(api.sessionById).toHaveBeenCalledTimes(2);
+    await act(async () => { afterClaim.resolve({ ...sample, assignment_status: "confirmed", member_id: "test_member" }); });
+    expect(screen.getByText("已归属：测试成员")).toBeVisible();
+    await act(async () => { beforeClaim.resolve(sample); });
+    expect(screen.getByText("已归属：测试成员")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "刷新待认领箱" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("查找记录 ID")).toHaveValue(sample.session_id);
+  });
+
+  it("keeps the saved snapshot honest when the post-claim read fails", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} />);
+    await user.type(screen.getByLabelText("查找记录 ID"), sample.session_id);
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    const card = await screen.findByRole("article", { name: "记录查找结果" });
+    vi.mocked(api.sessionById).mockRejectedValueOnce(new ApiError(408, "REQUEST_TIMEOUT"));
+    rerender(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} updatedRecord={{ config, sessionId: sample.session_id }} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("上次读取的内容");
+    expect(screen.getByRole("article", { name: "记录查找结果" })).toBe(card);
+    expect(screen.queryByText("已归属：测试成员")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).not.toHaveTextContent("已完成");
+  });
+
+  it("lets a new search supersede a claim refresh and ignores further updates for the old ID", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} />);
+    const input = screen.getByLabelText("查找记录 ID");
+    await user.type(input, sample.session_id);
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    await screen.findByRole("article", { name: "记录查找结果" });
+    const waitingA = deferred<HouseholdSession>();
+    const waitingB = deferred<HouseholdSession>();
+    vi.mocked(api.sessionById).mockImplementationOnce(() => waitingA.promise).mockImplementationOnce(() => waitingB.promise);
+    rerender(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} updatedRecord={{ config, sessionId: sample.session_id }} />);
+    const signalA = vi.mocked(api.sessionById).mock.calls[1][2]!;
+    await user.clear(input);
+    await user.type(input, "record_b");
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    expect(signalA.aborted).toBe(true);
+    const signalB = vi.mocked(api.sessionById).mock.calls[2][2]!;
+    rerender(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} updatedRecord={{ config, sessionId: sample.session_id }} />);
+    expect(api.sessionById).toHaveBeenCalledTimes(3);
+    expect(signalB.aborted).toBe(false);
+    await act(async () => { waitingB.resolve({ ...sample, session_id: "record_b" }); });
+    await act(async () => { waitingA.reject(new ApiError(403, "late old record denial")); });
+    expect(screen.getByRole("article", { name: "记录查找结果" })).toHaveTextContent("record_b");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(input).toHaveValue("record_b");
+  });
+
+  it("ignores another family's claim notification and clears an active refresh when credentials change", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} />);
+    await user.type(screen.getByLabelText("查找记录 ID"), sample.session_id);
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    await screen.findByRole("article", { name: "记录查找结果" });
+    const nextConfig = { ...config, householdKey: "changed-test-credential" };
+    rerender(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} updatedRecord={{ config: nextConfig, sessionId: sample.session_id }} />);
+    expect(api.sessionById).toHaveBeenCalledTimes(1);
+    const waiting = deferred<HouseholdSession>();
+    vi.mocked(api.sessionById).mockImplementationOnce(() => waiting.promise);
+    const notification = { config, sessionId: sample.session_id };
+    rerender(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} updatedRecord={notification} />);
+    const signal = vi.mocked(api.sessionById).mock.calls[1][2]!;
+    rerender(<RecordLookup config={nextConfig} members={members} onRefreshInbox={vi.fn()} updatedRecord={notification} />);
+    expect(signal.aborted).toBe(true);
+    await act(async () => { waiting.resolve({ ...sample, assignment_status: "confirmed", member_id: "test_member" }); });
+    expect(screen.queryByRole("article", { name: "记录查找结果" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("查找记录 ID")).toHaveValue("");
+    expect(api.sessionById).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels a post-claim read on unmount and does not revive it when remounted", async () => {
+    const user = userEvent.setup();
+    const notification = { config, sessionId: sample.session_id };
+    const { rerender, unmount } = render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} />);
+    await user.type(screen.getByLabelText("查找记录 ID"), sample.session_id);
+    await user.click(screen.getByRole("button", { name: "查找" }));
+    await screen.findByRole("article", { name: "记录查找结果" });
+    const waiting = deferred<HouseholdSession>();
+    vi.mocked(api.sessionById).mockImplementationOnce(() => waiting.promise);
+    rerender(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} updatedRecord={notification} />);
+    const signal = vi.mocked(api.sessionById).mock.calls[1][2]!;
+    unmount();
+    expect(signal.aborted).toBe(true);
+    render(<RecordLookup config={config} members={members} onRefreshInbox={vi.fn()} updatedRecord={notification} />);
+    await act(async () => { waiting.resolve(sample); });
+    await waitFor(() => expect(api.sessionById).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("article", { name: "记录查找结果" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("查找记录 ID")).toHaveValue("");
   });

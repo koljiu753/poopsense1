@@ -8,7 +8,7 @@ import WeeklyReportPanel from "./WeeklyReportPanel";
 import useClaimInbox from "./useClaimInbox";
 import RecordSource, { recordSourceLabel } from "./RecordSource";
 import RecordObservations from "./RecordObservations";
-import RecordLookup from "./RecordLookup";
+import RecordLookup, { type RecordLookupUpdate } from "./RecordLookup";
 import FamilyConnectionSettings from "./FamilyConnectionSettings";
 import { useAppNavigation, type View, type HealthSection } from "./useAppNavigation";
 import { SensorSimulator } from "./SensorSimulator";
@@ -275,6 +275,7 @@ export default function App() {
     return () => { active = false; window.clearInterval(poll); };
   }, [config, selectedMember, trendDays, dataRefreshVersion]);
   const claimInFlight = useRef<{ config: AppConfig } | null>(null);
+  const [recordLookupUpdate, setRecordLookupUpdate] = useState<RecordLookupUpdate | null>(null);
   async function assign(
     sessionId: string,
     memberId: string,
@@ -291,6 +292,7 @@ export default function App() {
     try {
       await api.claim(config, sessionId, memberId, correction);
       if (!isCurrentFamily()) return;
+      setRecordLookupUpdate({ config, sessionId });
       await Promise.all([finishInboxClaim(sessionId), refreshCore()]);
       if (!isCurrentFamily() || memberRevision !== feedRevision.current) return;
       const [nextTrend, nextSessions] = await Promise.all([
@@ -469,6 +471,7 @@ export default function App() {
               recordsLoading={recordsLoading} recordsError={recordsError} trendError={trendError} onRetry={retryMemberData}
               busy={busy}
               onAssign={assign}
+              recordLookupUpdate={recordLookupUpdate}
               onOpenReport={openReport}
             />
           </div>)}
@@ -1385,12 +1388,13 @@ function Health({
   onAssign,
   onOpenReport,
   section, onSection, requestedSource, onSourceChange, active, recordsLoading, recordsError, trendError, onRetry,
-  inboxError, onRetryInbox,
+  inboxError, onRetryInbox, recordLookupUpdate,
 }: {
   config: AppConfig;
   inbox: InboxItem[];
   inboxError: string;
   onRetryInbox: () => void;
+  recordLookupUpdate: RecordLookupUpdate | null;
   members: Member[];
   selected: string;
   onSelect: (v: string) => void;
@@ -1449,7 +1453,7 @@ function Health({
         busy={busy}
         onAssign={onAssign}
       />}
-      <RecordLookup config={config} members={members} onRefreshInbox={onRetryInbox} />
+      <RecordLookup config={config} members={members} onRefreshInbox={onRetryInbox} updatedRecord={recordLookupUpdate} />
       <section className="progressive-panel record-details" aria-label="最近记录">
         <header className="records-title"><b>最近记录</b><span>{recordsLoading ? "正在读取…" : recordsError && !sessions.length ? "暂未读到" : `${sessions.length} 次已归属记录`}</span></header>
         <article className="history">
