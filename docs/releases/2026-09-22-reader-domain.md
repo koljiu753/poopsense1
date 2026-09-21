@@ -26,4 +26,12 @@
 
 本轮前端完整183项测试、TypeScript检查与生产构建通过。新增覆盖慢网保留DOM/折叠状态/键盘焦点、失败后重试、认领前旧读取失效、A/B查询竞态、授权拒绝清空、换家庭与卸载隔离，以及App实际认领成功/失败的通知接线。测试使用虚构fixture，不向模型或真实设备发送请求。
 
+本地独立浏览器11项检查通过，包含320/390窄屏无横向溢出及上述失败/竞态处理；57个请求均为模拟响应，3次认领也只发生在fixture里，不作为真实公网写入证据。早期脚本的fixture不完整、同URL导航未清旧状态导致的两次QA失败均保留，修正验证脚本后通过，未用改业务代码掩盖失败。
+
+代码`9f2c830`已推送GitHub，[CI 35623699030](https://github.com/koljiu753/poopsense1/actions/runs/35623699030)的frontend、backend、postgres-demo三项及所有步骤成功。Reader生产部署`dpl_6ciFYCEhvYZbqH1XvkQccHHcBuXd`为READY，平台自动将poopsense.org分配到新部署。两个公网域名实际下载的`index-BKbOd4kb.js`与`index-DzpLALP3.css`均与最终本地构建SHA256一致，部署后设备回执、家庭记录和OpenAPI仍一致。后端未重新部署。
+
+新公网资产上再次运行11项模拟故障检查，全部通过；58个请求为mock，3次认领也是mock，零真实业务写入。320/390截图确认失败提示与刷新按钮同时可见、未被导航遮挡。之后关闭模拟会话，另开独立浏览器真实只读原记录及整页刷新，20个GET200、1个取证时仍pending，同ID、成员、原始观测与不足状态一致，无捕获页面异常或失败请求，零写入/模型调用。验证后关闭浏览器并清除会话凭据。
+
+本地证据：`.codex-qa/domain-reader-final-20260922.json`、`poopsense-domain-browser-20260922-v2.json`、`reader-lookup-20260921-validation.json`、`lookup-local-20260922-v3.json`、`lookup-public-20260922-v1.json`、`poopsense-post-lookup-browser-20260922-v1.json`。本地与公网的模拟故障截图、真实读取截图分别保存，不混称真实上传验收。
+
 本轮仍为持久化demo测试环境，正式个人登录、后台worker及自动备份策略没有在这次迭代中新增。
