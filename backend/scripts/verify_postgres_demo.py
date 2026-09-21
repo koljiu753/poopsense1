@@ -91,7 +91,7 @@ def main():
     with admin.connect() as connection:
         database, address = connection.execute(text('SELECT current_database(), inet_server_addr()::text')).one()
         # Docker's published localhost port reaches its private bridge address.
-        server_address = ipaddress.ip_address(address)
+        server_address = ipaddress.ip_interface(address).ip
         assert database == 'poopsense_ci' and server_address.is_private and not server_address.is_unspecified, 'Unexpected database target'
         connection.execute(CreateSchema(schema))
     target = url.update_query_dict({'options': '-csearch_path=' + schema + ' -cstatement_timeout=30000 -clock_timeout=15000'})
