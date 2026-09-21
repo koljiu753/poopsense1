@@ -813,6 +813,88 @@ describe("PoopSense core UI", () => {
     );
   });
 
+  it("loads chat while the inbox is slow and discovers pending records without disturbing the reply or draft", async () => {
+    window.history.replaceState(null, "", "/#/chat?member=m_001");
+    let finishInitialInbox!: (value: Awaited<ReturnType<typeof api.inbox>>) => void;
+    mocked.inbox.mockImplementationOnce(() => new Promise(resolve => { finishInitialInbox = resolve; }));
+    const response = await mocked.agentChat.getMockImplementation()!(null as never, "m_001", "fixture");
+    mocked.agentChat.mockResolvedValue({ ...response, message: { ...response.message, content: "这条已收到的回答需要继续保留。" } });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<App />);
+    const input = await screen.findByLabelText("描述你的情况");
+    await user.type(input, "先问一个问题");
+    await user.click(screen.getByRole("button", { name: "发送 →" }));
+    expect(await screen.findByText("这条已收到的回答需要继续保留。")).toBeVisible();
+    await user.type(input, "未发出的草稿{Enter}第二行");
+    await act(async () => { finishInitialInbox([]); });
+    mocked.inbox.mockResolvedValue([{ session_id: "new_pending", received_at: "2026-09-21T08:00:00Z", candidates: [], assignment_version: 1, data_kind: "hardware_test" }]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(window.location.hash).toBe("#/chat?member=m_001");
+    expect(screen.getByText("这条已收到的回答需要继续保留。")).toBeVisible();
+    expect(input).toHaveValue("未发出的草稿\n第二行");
+    expect(input).toHaveFocus();
+    expect(mocked.members).toHaveBeenCalledTimes(1);
+    expect(mocked.agentChat).toHaveBeenCalledTimes(1);
+    expect(mocked.analyzeSession).not.toHaveBeenCalled();
+    await user.click(screen.getAllByRole("button", { name: /健康/ })[0]);
+    expect(await screen.findByText("有 1 次记录等你确认")).toBeVisible();
+    expect(screen.getByText("硬件上传 · 测试记录")).toBeVisible();
+  });
+
+  it("does not put an already claimed row back when the earlier inbox poll finishes late", async () => {
+    window.history.replaceState(null, "", "/#/health/records?member=m_001");
+    const initial = await mocked.inbox.getMockImplementation()!(null as never);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<App />);
+    expect(await screen.findByText("有 1 次记录等你确认")).toBeVisible();
+    await user.selectOptions(screen.getByLabelText("这是谁的记录？"), "m_001");
+    let finishOldPoll!: (value: typeof initial) => void;
+    mocked.inbox.mockImplementationOnce(() => new Promise(resolve => { finishOldPoll = resolve; }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    mocked.inbox.mockResolvedValue([]);
+    await user.click(screen.getByRole("button", { name: "确认归属" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "确认归属" })).not.toBeInTheDocument());
+    await act(async () => { finishOldPoll(initial); });
+    expect(screen.queryByText("有 1 次记录等你确认")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认归属" })).not.toBeInTheDocument();
+    expect(mocked.claim).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps inbox refresh errors local and preserves the member choice until retry succeeds", async () => {
+    window.history.replaceState(null, "", "/#/health/records?member=m_001");
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<App />);
+    await user.selectOptions(await screen.findByLabelText("这是谁的记录？"), "m_002");
+    mocked.inbox.mockRejectedValueOnce(new Error("private connection details"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("这是谁的记录？")).toHaveValue("m_002");
+    expect(screen.getByRole("button", { name: "确认归属" })).toBeEnabled();
+    expect(screen.queryByText(/private connection/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重试待认领记录" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "重试待认领记录" })).not.toBeInTheDocument());
+    expect(screen.getByLabelText("这是谁的记录？")).toHaveValue("m_002");
+    expect(mocked.claim).not.toHaveBeenCalled();
+  });
+
+  it("shows a record's explicit test source in history without treating legacy false as real detection", async () => {
+    window.history.replaceState(null, "", "/#/health/records?member=m_001");
+    mocked.inbox.mockResolvedValue([]);
+    mocked.sessions.mockResolvedValue([
+      { session_id: "hardware_test", occurred_at: "2026-09-21T08:00:00Z", assignment_version: 1, assessment_status: "assessed", risk_level: "normal", message: "这是设备测试记录", data_kind: "hardware_test" },
+      { session_id: "legacy_unknown", occurred_at: "2026-09-20T08:00:00Z", assignment_version: 1, assessment_status: "assessed", risk_level: "normal", message: "旧记录未说明来源", simulated: false },
+    ]);
+    render(<App />);
+    const records = await screen.findByRole("region", { name: "最近记录" });
+    expect(await within(records).findByText("硬件上传 · 测试记录")).toBeVisible();
+    const unknownRow = within(records).getByText("旧记录未说明来源").closest(".history-row")!;
+    expect(unknownRow.querySelector(".record-source-label")).toBeNull();
+    expect(within(records).queryByText(/真实检测|真实记录/)).not.toBeInTheDocument();
+  });
+
   it("renders factual category ratios without averaging categories", async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -170,8 +170,6 @@ async def lifespan(_: FastAPI):
                 if not member:
                     db.add(HouseholdMember(id=member_id, household_id="hh_001",
                                            display_name=name, linked_user_id=linked_user, active=True))
-                else:
-                    member.display_name = name
             if not db.get(DeviceBinding, "dev_001"):
                 db.add(DeviceBinding(device_id="dev_001", household_id="hh_001",
                                      api_key_hash=hash_secret("dev-secret"), active=True))
@@ -192,7 +190,7 @@ async def lifespan(_: FastAPI):
                         "correlation_id": f"cor_{session_id}", "device_id": "dev_001",
                         "household_id": "hh_001", "firmware_version": "0.3.0",
                         "model_version": "edge-0.2.0", "sequence_number": sequence,
-                        "source": "device", "timestamp": started,
+                        "source": "device", "data_kind": "simulated", "timestamp": started,
                         "end_timestamp": started + timedelta(seconds=90), "duration_s": 90,
                         "clock_status": "synced", "clock_offset_ms": 40,
                         "presence_state": "present", "collection_state": "completed",
@@ -510,6 +508,7 @@ def receive_device_session(
 ):
     record, assignment, assessment, duplicate = ingest(db, payload, x_device_key)
     return SessionReceipt(
+        data_kind=record.data_kind,
         session_id=record.external_session_id,
         correlation_id=record.correlation_id,
         received_at=record.received_at,
@@ -576,6 +575,8 @@ def simulate_sensor(household_id: str, payload: SensorSimulationInput,
         "device_id": "dev_001", "household_id": household_id,
         "firmware_version": "simulation", "model_version": "sensor-simulation-v1",
         "sequence_number": int(payload.timestamp.timestamp() * 1000), "source": "device",
+        # Retrying a pre-classification simulation must retain its original hash.
+        "data_kind": existing.data_kind if existing else "simulated",
         "timestamp": payload.timestamp, "end_timestamp": payload.timestamp, "duration_s": 0,
         "clock_status": "synced", "presence_state": "present", "collection_state": "completed",
         "observations": {key: {"value": value, "confidence": confidence,
@@ -587,6 +588,7 @@ def simulate_sensor(household_id: str, payload: SensorSimulationInput,
     if payload.member_id and assignment.assignment_status == "pending_claim":
         assignment = claim_session(db, record, ClaimInput(member_id=payload.member_id))
     return {"session_id": session_id, "duplicate": duplicate, "simulated": True,
+            "data_kind": record.data_kind,
             "assignment_status": assignment.assignment_status, "assessment_status": assessment.status}
 
 
@@ -608,6 +610,7 @@ def claim_inbox(household_id: str, x_household_key: str = Header(...), db: Sessi
         .order_by(SessionRecord.received_at.desc())
     ).all()
     return [InboxItem(session_id=s.external_session_id, received_at=s.received_at,
+                      data_kind=s.data_kind,
                       candidates=a.candidates, assignment_version=a.version) for s, a in rows]
 
 
@@ -1297,7 +1300,13 @@ def member_sessions(household_id: str, member_id: str,
         variant = shape_variants.get(shape.value if shape else "", "uncertain")
         reliable_visual = assessment.reliable and variant != "uncertain"
         results.append(MemberSessionResult(
-            simulated=record.model_version == "sensor-simulation-v1" or record.external_session_id.startswith("demo_"),
+            data_kind=record.data_kind,
+            simulated=record.data_kind == "simulated" or (
+                record.data_kind == "unknown" and (
+                    record.model_version == "sensor-simulation-v1"
+                    or record.external_session_id.startswith("demo_")
+                )
+            ),
             session_id=record.external_session_id,
             occurred_at=record.occurred_at if record.occurred_at.tzinfo else record.occurred_at.replace(tzinfo=timezone.utc),
             assignment_version=assignment.version, assessment_status=assessment.status,

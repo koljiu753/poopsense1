@@ -5,6 +5,8 @@ import ChatMessageContent from "./ChatMessageContent";
 import ChatComposer, { ChatWaiting } from "./ChatComposer";
 import PetAvatar, { PET_SKINS, petSkinLabel } from "./PetAvatar";
 import WeeklyReportPanel from "./WeeklyReportPanel";
+import useClaimInbox from "./useClaimInbox";
+import RecordSource, { recordSourceLabel } from "./RecordSource";
 import { useAppNavigation, type View, type HealthSection } from "./useAppNavigation";
 import { SensorSimulator } from "./SensorSimulator";
 import {
@@ -92,6 +94,9 @@ function memberName(member: Member) {
 
 export default function App() {
   const [config, setConfig] = useState(loadConfig);
+  const currentConfig = useRef(config);
+  currentConfig.current = config;
+  const { items: inbox, error: inboxError, refresh: refreshInbox, beginClaim: beginInboxClaim } = useClaimInbox(config);
   const navigation = useAppNavigation();
   const { route, navigate } = navigation;
   const view = route.view;
@@ -108,7 +113,6 @@ export default function App() {
   const requestedSource = route.sourceId;
   const [members, setMembers] = useState<Member[]>([]);
   const [membersReady, setMembersReady] = useState(false);
-  const [inbox, setInbox] = useState<InboxItem[]>([]);
   const selectedMember = route.memberId ? members.find(member => member.member_id === route.memberId)?.member_id ?? "" : members[0]?.member_id ?? "";
   const memberUnavailable = membersReady && !!route.memberId && !selectedMember;
   const [trend, setTrend] = useState<Trend | null>(null);
@@ -172,33 +176,24 @@ export default function App() {
     document.title = `${titles[view]} · PoopSense`;
   }, [view, healthSection]);
   const coreRevision = useRef(0);
-  const refreshCore = useCallback(async () => {
+  const refreshCore = useCallback(async (includeInbox = true) => {
     const revision = ++coreRevision.current;
+    if (includeInbox) void refreshInbox();
     setBusy(true);
     setError("");
     try {
-      const [nextMembers, nextInbox] = await Promise.all([
-        api.members(config),
-        api
-          .inbox(config)
-          .catch((caught) =>
-            caught instanceof ApiError && caught.status === 403
-              ? []
-              : Promise.reject(caught),
-          ),
-      ]);
+      const nextMembers = await api.members(config);
       if (revision !== coreRevision.current) return;
       setMembers(nextMembers);
-      setInbox(nextInbox);
       setMembersReady(true);
     } catch (caught) {
       if (revision === coreRevision.current) setError(friendlyError(caught));
     } finally {
       if (revision === coreRevision.current) setBusy(false);
     }
-  }, [config]);
+  }, [config, refreshInbox]);
   useEffect(() => {
-    void refreshCore();
+    void refreshCore(false);
     return () => { coreRevision.current += 1; };
   }, [refreshCore]);
   useEffect(() => {
@@ -275,26 +270,39 @@ export default function App() {
     const poll = window.setInterval(() => void refreshTrend(), 5000);
     return () => { active = false; window.clearInterval(poll); };
   }, [config, selectedMember, trendDays, dataRefreshVersion]);
+  const claimInFlight = useRef<{ config: AppConfig } | null>(null);
   async function assign(
     sessionId: string,
     memberId: string,
     correction = false,
   ) {
+    if (claimInFlight.current?.config === config) return;
+    const claimToken = { config };
+    claimInFlight.current = claimToken;
+    const finishInboxClaim = beginInboxClaim();
+    const memberRevision = feedRevision.current;
+    const isCurrentFamily = () => currentConfig.current === config;
     setBusy(true);
     setError("");
     try {
       await api.claim(config, sessionId, memberId, correction);
-      await refreshCore();
+      if (!isCurrentFamily()) return;
+      await Promise.all([finishInboxClaim(sessionId), refreshCore()]);
+      if (!isCurrentFamily() || memberRevision !== feedRevision.current) return;
       const [nextTrend, nextSessions] = await Promise.all([
         api.trend(config, selectedMember, trendDays),
         api.sessions(config, selectedMember),
       ]);
-      setTrend(nextTrend);
-      setSessions(nextSessions);
+      if (isCurrentFamily() && memberRevision === feedRevision.current) {
+        setTrend(nextTrend);
+        setSessions(nextSessions);
+      }
     } catch (caught) {
-      setError(friendlyError(caught));
+      if (isCurrentFamily()) setError(friendlyError(caught));
     } finally {
-      setBusy(false);
+      await finishInboxClaim();
+      if (claimInFlight.current === claimToken) claimInFlight.current = null;
+      if (isCurrentFamily()) setBusy(false);
     }
   }
   const selected = members.find((item) => item.member_id === selectedMember);
@@ -361,7 +369,7 @@ export default function App() {
           </span>
         </header>
         <main className={view === "home" ? "home-main" : undefined}>
-          {pendingResult && (view !== "doctor" || route.chat) && view !== "result" && <NewRecordNotice memberName={selectedName} pendingCount={pendingResults.length} occurredAt={pendingResult.occurred_at} simulated={Boolean(pendingResult.simulated)} urgent={pendingResult.risk_level === "redline"} onOpen={openPendingResult} onDismiss={() => setPendingResults(current => current.filter(item => item.session_id !== pendingResult.session_id))} />}
+          {pendingResult && (view !== "doctor" || route.chat) && view !== "result" && <NewRecordNotice memberName={selectedName} pendingCount={pendingResults.length} occurredAt={pendingResult.occurred_at} dataKind={pendingResult.data_kind} simulated={Boolean(pendingResult.simulated)} urgent={pendingResult.risk_level === "redline"} onOpen={openPendingResult} onDismiss={() => setPendingResults(current => current.filter(item => item.session_id !== pendingResult.session_id))} />}
           {error && (
             <div className="alert" role="alert">
               <span>!</span>
@@ -400,7 +408,7 @@ export default function App() {
                 navigate({ view: "result", sessionId: result.session_id });
               }} />
           )}
-          {view !== "home" && (view === "doctor" ? doctorAutoSession : view === "result" ? resultSession : sessions[0])?.simulated && <div className="simulation-label">模拟记录 · 用于体验，不代表真实检测结果</div>}
+          {(view === "doctor" || view === "result") && recordSourceLabel(doctorAutoSession) && <div className="simulation-label">{recordSourceLabel(doctorAutoSession)}{recordSourceLabel(doctorAutoSession) === "模拟记录" ? " · 用于体验，不代表真实检测结果" : " · 不代表正式健康评估"}</div>}
           {view === "result" && resultSession && (
             <ResultArrival
               session={resultSession}
@@ -432,6 +440,7 @@ export default function App() {
               key={`${config.apiBase}:${config.householdId}:${selectedMember}`}
               config={config}
               inbox={inbox}
+              inboxError={inboxError} onRetryInbox={() => void refreshInbox()}
               members={members}
               selected={selectedMember}
               onSelect={selectMember}
@@ -599,7 +608,7 @@ function Home({
         <div className="record-context">
           <span>{latest ? "最近一次记录" : loading ? "正在读取记录" : "还没有记录"} · {displayName}</span>
           {latest ? <time dateTime={latest.occurred_at}>{new Date(latest.occurred_at).toLocaleString("zh-CN", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time> : null}
-          {latest?.simulated ? <small>模拟记录 · 不代表真实检测</small> : null}
+          {latest && <RecordSource record={latest} />}
         </div>
         <div className="hero-copy">
           <div className="status-line">
@@ -1366,9 +1375,12 @@ function Health({
   onAssign,
   onOpenReport,
   section, onSection, requestedSource, onSourceChange, active, recordsLoading, recordsError, trendError, onRetry,
+  inboxError, onRetryInbox,
 }: {
   config: AppConfig;
   inbox: InboxItem[];
+  inboxError: string;
+  onRetryInbox: () => void;
   members: Member[];
   selected: string;
   onSelect: (v: string) => void;
@@ -1420,6 +1432,7 @@ function Health({
         refreshKey={`${active}:${sessions.map(item => `${item.session_id}:${item.assignment_version}:${item.assessment_status}:${item.risk_level}`).join("|")}`} />
       </div>
       <div hidden={section !== "records"}>
+      {inboxError && <div className="record-load-error inbox-load-error" role="status"><span>{inboxError}</span><button onClick={onRetryInbox}>重试待认领记录</button></div>}
       {!!inbox.length && <InboxPanel
         inbox={inbox}
         members={members}
@@ -1437,6 +1450,7 @@ function Health({
             <span>
               <b>{new Date(item.occurred_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</b>
               <small>{item.message}</small>
+              <RecordSource record={item} />
               <button className="history-report-link" onClick={() => onOpenReport(item)}>查看这条报告 →</button>
             </span>
             <Correction
@@ -1458,6 +1472,7 @@ function Health({
                     {new Date(item.occurred_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </b>
                   <small>{item.message}</small>
+                  <RecordSource record={item} />
                   <button className="history-report-link" onClick={() => onOpenReport(item)}>查看这条报告 →</button>
                 </span>
                 <Correction
@@ -1906,6 +1921,7 @@ function InboxPanel({
               hour: "2-digit",
               minute: "2-digit",
             })}
+            <RecordSource record={item} />
           </span>
           <select
             aria-label="这是谁的记录？"

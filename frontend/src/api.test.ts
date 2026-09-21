@@ -4,6 +4,19 @@ import { api } from "./api";
 const config = { apiBase: "http://test.invalid", householdId: "test", householdKey: "test-only" };
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+it("allows an obsolete inbox read to be cancelled without retrying", async () => {
+  const fetcher = vi.fn((_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+  }));
+  vi.stubGlobal("fetch", fetcher);
+  const controller = new AbortController();
+  const result = api.inbox(config, controller.signal);
+  const assertion = expect(result).rejects.toMatchObject({ name: "AbortError" });
+  controller.abort();
+  await assertion;
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
 it("aborts a stalled read and permits a later successful read without automatic retry", async () => {
   vi.useFakeTimers();
   const fetcher = vi.fn().mockImplementationOnce((_url, init) => new Promise((_resolve, reject) => {

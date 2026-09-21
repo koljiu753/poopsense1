@@ -140,3 +140,5 @@
   .experience .followup-observation h3 { font-size: 18px; }
   .experience .followup-source { flex-wrap: wrap; gap: 4px 12px; }
 }
+.experience .record-source-label { display: block; margin-top: 4px; color: var(--blue); font-size: 11px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
+.experience .inbox-load-error { font-size: 13px; line-height: 1.6; }

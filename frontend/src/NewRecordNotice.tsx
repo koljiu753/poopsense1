@@ -1,17 +1,21 @@
 import "./new-record-notice.css";
+import type { DataKind } from "./api";
+import { recordSourceLabel } from "./RecordSource";
 
 export interface NewRecordNoticeProps {
   onOpen: () => void;
   onDismiss: () => void;
   memberName: string;
   simulated: boolean;
+  dataKind?: DataKind;
   urgent?: boolean;
   pendingCount?: number;
   occurredAt?: string;
 }
 
-export default function NewRecordNotice({ onOpen, onDismiss, memberName, simulated, urgent = false, pendingCount = 1, occurredAt }: NewRecordNoticeProps) {
+export default function NewRecordNotice({ onOpen, onDismiss, memberName, simulated, dataKind, urgent = false, pendingCount = 1, occurredAt }: NewRecordNoticeProps) {
   const recordTime = occurredAt ? new Date(occurredAt) : null;
+  const source = recordSourceLabel({ data_kind: dataKind, simulated });
   return (
     <aside className={`new-record-notice${urgent ? " is-urgent" : ""}`} aria-label="新记录提醒">
       <img className="new-record-notice-character" src="/poopsense-mascot-pop-v1.webp" alt="" width={56} height={56} />
@@ -23,7 +27,7 @@ export default function NewRecordNotice({ onOpen, onDismiss, memberName, simulat
           {recordTime && !Number.isNaN(recordTime.getTime()) && <time dateTime={occurredAt}>{recordTime.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>}
           <span>{pendingCount} 条待查看</span>
           {urgent && <span className="new-record-notice-priority">优先查看</span>}
-          {simulated && <span className="new-record-notice-source">模拟记录</span>}
+          {source && <span className="new-record-notice-source">{source}</span>}
         </p>
       </div>
       <div className="new-record-notice-actions">

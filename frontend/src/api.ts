@@ -8,13 +8,17 @@ export type Member = {
   display_name: string;
   linked_to_current_user: boolean;
 };
+export type DataKind = "unknown" | "simulated" | "hardware_test";
 export type InboxItem = {
+  data_kind?: DataKind;
+  simulated?: boolean;
   session_id: string;
   received_at: string;
   candidates: { member_ref: string; confidence: number }[];
   assignment_version: number;
 };
 export type MemberSession = {
+  data_kind?: DataKind;
   simulated?: boolean;
   session_id: string;
   occurred_at: string;
@@ -494,8 +498,8 @@ export const api = {
     request<Member>(c, `/api/v1/households/${c.householdId}/members`, {
       method: "POST", body: JSON.stringify({ display_name: displayName }),
     }),
-  inbox: (c: AppConfig) =>
-    request<InboxItem[]>(c, `/api/v1/households/${c.householdId}/claim-inbox`),
+  inbox: (c: AppConfig, signal?: AbortSignal) =>
+    request<InboxItem[]>(c, `/api/v1/households/${c.householdId}/claim-inbox`, { signal }),
   simulationStatus: (c: AppConfig) => request<{ enabled: boolean; reason?: string | null }>(c, `/api/v1/households/${c.householdId}/sensor-simulation`),
   simulateSensor: (c: AppConfig, payload: { request_id: string; timestamp: string; scenario: string; member_id: string | null }) =>
     request<{ session_id: string; duplicate: boolean; assignment_status: string }>(c,

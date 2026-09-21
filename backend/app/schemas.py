@@ -4,6 +4,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+DataKind = Literal["unknown", "simulated", "hardware_test"]
+
+
 class ObservationInput(BaseModel):
     value: str | None
     confidence: float | None = Field(default=None, ge=0, le=1)
@@ -41,6 +44,7 @@ class DeviceSessionInput(BaseModel):
     model_version: str
     sequence_number: int = Field(ge=0)
     source: Literal["device"]
+    data_kind: DataKind = "unknown"
     timestamp: datetime
     end_timestamp: datetime
     duration_s: int = Field(ge=0)
@@ -69,6 +73,7 @@ class DeviceSessionInput(BaseModel):
 
 
 class SessionReceipt(BaseModel):
+    data_kind: DataKind = "unknown"
     session_id: str
     correlation_id: str
     received_at: datetime
@@ -79,6 +84,7 @@ class SessionReceipt(BaseModel):
 
 
 class InboxItem(BaseModel):
+    data_kind: DataKind = "unknown"
     session_id: str
     received_at: datetime
     candidates: list[dict[str, Any]]
@@ -661,6 +667,7 @@ class PoopVisualProfile(BaseModel):
 
 
 class MemberSessionResult(BaseModel):
+    data_kind: DataKind = "unknown"
     simulated: bool = False
     session_id: str
     occurred_at: datetime

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -33,7 +34,12 @@ def hash_secret(value: str) -> str:
 
 
 def canonical_hash(payload: DeviceSessionInput) -> str:
-    raw = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    data = payload.model_dump(mode="json")
+    # Preserve the digest of pre-classification device packets, including defaults.
+    # An explicit test classification remains part of the immutable upload facts.
+    if data.get("data_kind") == "unknown":
+        data.pop("data_kind")
+    raw = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -145,6 +151,18 @@ def create_assessment_version(db: Session, record: SessionRecord) -> Assessment:
     return assessment
 
 
+def _duplicate_receipt(db: Session, existing: SessionRecord, digest: str):
+    if existing.payload_hash != digest:
+        raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+    assignment = db.scalar(select(MemberAssignment).where(
+        MemberAssignment.session_id == existing.id, MemberAssignment.active.is_(True)
+    ))
+    assessment = db.scalar(select(Assessment).where(
+        Assessment.session_id == existing.id, Assessment.active.is_(True)
+    ))
+    return existing, assignment, assessment, True
+
+
 def ingest(db: Session, payload: DeviceSessionInput, api_key: str):
     authenticate_device(db, payload, api_key)
     digest = canonical_hash(payload)
@@ -155,15 +173,7 @@ def ingest(db: Session, payload: DeviceSessionInput, api_key: str):
         )
     )
     if existing:
-        if existing.payload_hash != digest:
-            raise HTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-        assignment = db.scalar(
-            select(MemberAssignment).where(MemberAssignment.session_id == existing.id, MemberAssignment.active.is_(True))
-        )
-        assessment = db.scalar(select(Assessment).where(
-            Assessment.session_id == existing.id, Assessment.active.is_(True)
-        ))
-        return existing, assignment, assessment, True
+        return _duplicate_receipt(db, existing, digest)
 
     received_at = datetime.now(timezone.utc)
     record = SessionRecord(
@@ -176,6 +186,7 @@ def ingest(db: Session, payload: DeviceSessionInput, api_key: str):
         model_version=payload.model_version,
         sequence_number=payload.sequence_number,
         source=payload.source,
+        data_kind=payload.data_kind,
         occurred_at=payload.timestamp.astimezone(timezone.utc),
         end_timestamp=payload.end_timestamp.astimezone(timezone.utc),
         received_at=received_at,
@@ -191,7 +202,21 @@ def ingest(db: Session, payload: DeviceSessionInput, api_key: str):
         payload_hash=digest,
     )
     db.add(record)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Another request can win the (device_id, external_session_id) insert
+        # after our first read. Roll back the failed transaction before reading
+        # its committed aggregate; subsequent fact/outbox failures are not hidden.
+        db.rollback()
+        authenticate_device(db, payload, api_key)
+        existing = db.scalar(select(SessionRecord).where(
+            SessionRecord.device_id == payload.device_id,
+            SessionRecord.external_session_id == payload.session_id,
+        ))
+        if existing is None:
+            raise
+        return _duplicate_receipt(db, existing, digest)
     for dimension, item in payload.observations.items():
         extra = {"change_pct": item.change_pct} if item.change_pct is not None else {}
         db.add(Observation(session_id=record.id, dimension=dimension, value=item.value,

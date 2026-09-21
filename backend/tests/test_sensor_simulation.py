@@ -19,11 +19,13 @@ def test_presets_use_ingestion_and_claim(client, scenario):
     first = client.post(URL, headers=HEADERS, json=payload)
     assert first.status_code == 202, first.text
     assert first.json()["assignment_status"] == "confirmed"
+    assert first.json()["data_kind"] == "simulated"
     again = client.post(URL, headers=HEADERS, json=payload)
     assert again.json()["duplicate"] is True
     records = client.get("/api/v1/households/hh_001/members/m_001/sessions", headers=HEADERS).json()
     assert len(records) == 1
     assert records[0]["simulated"] is True
+    assert records[0]["data_kind"] == "simulated"
     if scenario == "redline":
         assert records[0]["risk_level"] == "redline"
     if scenario == "uncertain":
@@ -36,6 +38,28 @@ def test_pending_does_not_enter_personal_history(client):
     assert client.post(URL, headers=HEADERS, json=sample(member=None)).status_code == 202
     assert client.get("/api/v1/households/hh_001/members/m_001/sessions", headers=HEADERS).json() == []
     assert len(client.get("/api/v1/households/hh_001/claim-inbox", headers=HEADERS).json()) == 1
+    assert client.get("/api/v1/households/hh_001/claim-inbox", headers=HEADERS).json()[0]["data_kind"] == "simulated"
+
+
+def test_pre_classification_simulation_retry_keeps_hash_and_legacy_boolean(client, monkeypatch):
+    from app import main
+    real_ingest = main.ingest
+
+    def old_ingest(db, payload, api_key):
+        return real_ingest(db, payload.model_copy(update={"data_kind": "unknown"}), api_key)
+
+    payload = sample()
+    monkeypatch.setattr(main, "ingest", old_ingest)
+    first = client.post(URL, headers=HEADERS, json=payload)
+    assert first.status_code == 202
+    monkeypatch.setattr(main, "ingest", real_ingest)
+    again = client.post(URL, headers=HEADERS, json=payload)
+    assert again.status_code == 202
+    assert again.json()["duplicate"] is True
+    assert again.json()["data_kind"] == "unknown"
+    record = client.get("/api/v1/households/hh_001/members/m_001/sessions", headers=HEADERS).json()[0]
+    assert record["data_kind"] == "unknown"
+    assert record["simulated"] is True
 
 
 def test_serverless_temporary_sqlite_does_not_offer_unreliable_simulation(client, monkeypatch):

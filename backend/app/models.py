@@ -98,6 +98,7 @@ class SessionRecord(Base):
     model_version: Mapped[str] = mapped_column(String(100))
     sequence_number: Mapped[int] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(String(30))
+    data_kind: Mapped[str] = mapped_column(String(30), default="unknown", server_default="unknown")
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     end_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
