@@ -14,6 +14,10 @@ HOUSEHOLD_HEADERS = {"X-Household-Key": "household-secret"}
 
 def upload(client, base, session_id, sequence, *, confidence=0.8, shape="normal", color="brown"):
     payload = deepcopy(base)
+    # Keep synthetic records inside the rolling trend window on any test date.
+    occurred_at = datetime.now(timezone.utc) - timedelta(days=1)
+    payload["timestamp"] = occurred_at.isoformat()
+    payload["end_timestamp"] = (occurred_at + timedelta(seconds=93)).isoformat()
     payload["session_id"] = session_id
     payload["correlation_id"] = f"cor_{session_id}"
     payload["sequence_number"] = sequence
