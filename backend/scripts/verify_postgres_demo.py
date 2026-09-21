@@ -77,6 +77,7 @@ def main():
         child_read()
         return
     url = make_url(os.environ['POOPSENSE_POSTGRES_TEST_URL'])
+    container = os.environ.get('POOPSENSE_POSTGRES_TEST_CONTAINER', '')
     if (url.drivername != 'postgresql+psycopg' or url.host not in ('127.0.0.1', 'localhost', '::1')
             or url.database != 'poopsense_ci' or url.query):
         raise SystemExit('This check only accepts a local PostgreSQL database named poopsense_ci.')
@@ -206,8 +207,11 @@ def main():
 
         same = race('ci_same_race', False)
         different = race('ci_conflict_race', True)
+        from scripts.verify_postgres_backup import verify_backup_restore
+        backup = verify_backup_restore(admin, engine, schema, container) if container else {'status': 'not_run'}
         print(json.dumps({'postgres_migrations': 'passed', 'upload_claim_fresh_process': 'passed',
-                          'same_payload_race': same, 'different_payload_race': different}), flush=True)
+                          'same_payload_race': same, 'different_payload_race': different,
+                          'backup_restore': backup}), flush=True)
     finally:
         if engine is not None:
             engine.dispose()
