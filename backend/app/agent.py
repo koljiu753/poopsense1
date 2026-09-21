@@ -21,7 +21,7 @@ from .chat_refinement import BRIEF_REPLY_FORMAT, question_only_context, reply_fo
 from .model_provider import is_baichuan_medical_plus, medical_policy_decision, prepare_model_payload, render_model_reply
 from .model_routing import ModelSpec, classify_task, resolve_model
 from .models import AgentAction, AgentConversation, AgentFeedback, AgentHandoff, AgentMemoryEntry, AgentMessage, AgentRun, AgentStep, Assessment, MemberAssignment, Observation, OutboxEvent, SessionRecord
-from .service import AuthContext, POLICY_VERSION, authorize_member_view, member_trend
+from .service import AuthContext, POLICY_VERSION, authorize_member_view, health_session_filter, household_session_record, is_manual_sampling, member_trend
 from .agent_native import AGENT_SPECS, get_or_create_profile, in_quiet_hours, route_skill
 from .agent_loop import cancel_run, fail_run, finish_run, pause_run, resume_run, start_chat_run
 from .longitudinal import ensure_followup
@@ -329,12 +329,7 @@ VALUE_LABELS = {
 def build_session_analysis(db: Session, auth: AuthContext, member_id: str,
                            external_session_id: str) -> tuple[SessionRecord, Assessment, dict[str, Any]]:
     """Build a deterministic, auditable report from one confirmed sensor session."""
-    record = db.scalar(select(SessionRecord).where(
-        SessionRecord.external_session_id == external_session_id,
-        SessionRecord.household_id == auth.household_id,
-    ))
-    if not record:
-        raise HTTPException(status_code=404, detail={"code": "SESSION_NOT_FOUND"})
+    record = household_session_record(db, auth.household_id, external_session_id)
     assignment = db.scalar(select(MemberAssignment).where(
         MemberAssignment.session_id == record.id,
         MemberAssignment.active.is_(True),
@@ -370,7 +365,16 @@ def build_session_analysis(db: Session, auth: AuthContext, member_id: str,
         phrase in assessment.message for phrase in ("一颗颗", "干硬", "偏硬")
     )
     generated_at = datetime.now(timezone.utc)
-    if not assessment.reliable:
+    if is_manual_sampling(record):
+        report = {
+            "session_id": external_session_id, "generated_at": generated_at.isoformat(),
+            "status": "insufficient", "reliable": False,
+            "headline": "手动采样仅用于硬件联调",
+            "summary": "形状、颜色和模板相似度是采样观测，不是健康结论；本记录不参与个人基线或红线判断。",
+            "findings": [], "recommendations": [],
+            "next_step": "在记录详情查看原始观测、采样时长及传感器缺失原因。",
+        }
+    elif not assessment.reliable:
         report = {
             "session_id": external_session_id, "generated_at": generated_at.isoformat(),
             "status": "insufficient", "reliable": False,
@@ -665,6 +669,7 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
                 .join(MemberAssignment, MemberAssignment.session_id == SessionRecord.id)
                 .join(Assessment, Assessment.session_id == SessionRecord.id)
                 .where(SessionRecord.household_id == auth.household_id,
+                       health_session_filter(),
                        MemberAssignment.active.is_(True), MemberAssignment.member_id == member_id,
                        Assessment.active.is_(True))
                 .order_by(SessionRecord.occurred_at.desc()).limit(5)
@@ -731,8 +736,10 @@ def chat(db: Session, auth: AuthContext, member_id: str, text: str,
     # Repeated real Plus probes expanded frozen report facts and fabricated
     # internal citations. Keep automatic sensor reports deterministic; ordinary
     # questions still use the selected medical model. Avoid two wasted calls.
-    rule_report = bool(session_report) and model_caller is call_chat_model and (
-        settings.llm_routing_enabled or is_baichuan_medical_plus(settings.llm_base_url, settings.llm_model)
+    rule_report = bool(session_report) and (
+        is_manual_sampling(session_record) or (model_caller is call_chat_model and (
+            settings.llm_routing_enabled or is_baichuan_medical_plus(settings.llm_base_url, settings.llm_model)
+        ))
     )
     try:
         try:
@@ -984,7 +991,7 @@ def orchestrate_session(db: Session, session_record_id: int, model_caller=call_m
     ))
     if not record or not assignment or not assessment:
         raise ValueError("session is not ready for orchestration")
-    if not assessment.reliable:
+    if is_manual_sampling(record) or not assessment.reliable:
         allowed = ["no_action"]
     elif assessment.risk_level == "redline":
         allowed = ["redline_notification"]
@@ -995,8 +1002,10 @@ def orchestrate_session(db: Session, session_record_id: int, model_caller=call_m
         '{"action":"...","reason":"...","message":"..."}。'
         f"\n{json.dumps({'allowed_actions': allowed, 'assessment': {'status': assessment.status, 'risk_level': assessment.risk_level, 'message': assessment.message}}, ensure_ascii=False)}"
     )
-    policy_selection = model_caller is call_model and (
-        settings.llm_routing_enabled or is_baichuan_medical_plus(settings.llm_base_url, settings.llm_model)
+    policy_selection = is_manual_sampling(record) or (
+        model_caller is call_model and (
+            settings.llm_routing_enabled or is_baichuan_medical_plus(settings.llm_base_url, settings.llm_model)
+        )
     )
     if policy_selection:
         # The medical endpoint refuses operational JSON. Use the existing action

@@ -39,17 +39,128 @@ def canonical_hash(payload: DeviceSessionInput) -> str:
     # An explicit test classification remains part of the immutable upload facts.
     if data.get("data_kind") == "unknown":
         data.pop("data_kind")
+    if data["quality"].get("session_kind") is None:
+        # New optional nested fields must not change pre-existing standard hashes.
+        data["quality"].pop("session_kind", None)
+        data["quality"].pop("duration_semantics", None)
+        for observation in data["observations"].values():
+            if observation.get("template_similarity") is None:
+                observation.pop("template_similarity", None)
+            if observation.get("similarity_scale") == "unknown":
+                observation.pop("similarity_scale", None)
     raw = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def authenticate_device(db: Session, payload: DeviceSessionInput, api_key: str) -> DeviceBinding:
-    binding = db.get(DeviceBinding, payload.device_id)
-    if not binding or not binding.active or not hmac.compare_digest(binding.api_key_hash, hash_secret(api_key)):
-        raise HTTPException(status_code=401, detail={"code": "DEVICE_AUTH_FAILED"})
+    binding = authenticate_device_key(db, payload.device_id, api_key)
     if binding.household_id != payload.household_id:
         raise HTTPException(status_code=403, detail={"code": "DEVICE_HOUSEHOLD_MISMATCH"})
     return binding
+
+
+def authenticate_device_key(db: Session, device_id: str, api_key: str) -> DeviceBinding:
+    binding = db.get(DeviceBinding, device_id)
+    if not binding or not binding.active or not hmac.compare_digest(binding.api_key_hash, hash_secret(api_key)):
+        raise HTTPException(status_code=401, detail={"code": "DEVICE_AUTH_FAILED"})
+    return binding
+
+
+def household_session_record(db: Session, household_id: str, session_id: str) -> SessionRecord:
+    records = db.scalars(select(SessionRecord).where(
+        SessionRecord.external_session_id == session_id, SessionRecord.household_id == household_id,
+    ).limit(2)).all()
+    if not records:
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND"})
+    if len(records) > 1:
+        raise HTTPException(409, detail={"code": "SESSION_ID_AMBIGUOUS"})
+    return records[0]
+
+
+def is_manual_sampling(record: SessionRecord | None) -> bool:
+    return bool(record and record.quality.get("session_kind") == "manual_sampling")
+
+
+def health_session_filter():
+    # JSON extraction compiles for both PostgreSQL and SQLite; legacy missing keys
+    # retain the existing standard-session behavior.
+    return func.coalesce(SessionRecord.quality["session_kind"].as_string(), "") != "manual_sampling"
+
+
+def is_simulated_record(record: SessionRecord) -> bool:
+    return record.data_kind == "simulated" or (record.data_kind == "unknown" and (
+        record.model_version == "sensor-simulation-v1" or record.external_session_id.startswith("demo_")
+    ))
+
+
+def session_evidence_map(db: Session, records: list[SessionRecord]) -> dict[int, dict]:
+    """Public sensor facts and rule/report state; never includes member/audit text."""
+    if not records:
+        return {}
+    ids = [record.id for record in records]
+    observations: dict[int, dict] = {}
+    for item in db.scalars(select(Observation).where(Observation.session_id.in_(ids))):
+        extra = item.extra or {}
+        observations.setdefault(item.session_id, {})[item.dimension] = {
+            "value": item.value, "confidence": item.confidence, "missing_reason": item.missing_reason,
+            "source": item.source, "model_version": item.model_version,
+            "change_pct": extra.get("change_pct"), "template_similarity": extra.get("template_similarity"),
+            "similarity_scale": extra.get("similarity_scale", "unknown"),
+        }
+    assessments = {item.session_id: item for item in db.scalars(select(Assessment).where(
+        Assessment.session_id.in_(ids), Assessment.active.is_(True),
+    ))}
+    assignments = {item.session_id: item for item in db.scalars(select(MemberAssignment).where(
+        MemberAssignment.session_id.in_(ids), MemberAssignment.active.is_(True),
+    ))}
+    reports = {}
+    for action in db.scalars(select(AgentAction).where(
+        AgentAction.session_id.in_(ids), AgentAction.action_type == "agent_session_analysis",
+    ).order_by(AgentAction.id.desc())):
+        assignment, assessment = assignments.get(action.session_id), assessments.get(action.session_id)
+        # A prior member's or superseded assessment's report is not the current one.
+        if not assignment or not assessment or action.subject_member_id != assignment.member_id:
+            continue
+        boundaries = [assessment.created_at, assignment.claimed_at]
+        if any(value and _as_utc(action.created_at) < _as_utc(value) for value in boundaries):
+            continue
+        reports.setdefault(action.session_id, action)
+    results = {}
+    for record in records:
+        manual = is_manual_sampling(record)
+        assessment, report = assessments.get(record.id), reports.get(record.id)
+        llm_status = "not_applicable" if manual else "not_requested"
+        if report and not manual:
+            if report.status == "succeeded":
+                llm_status = "policy_only" if report.model_version == "policy-engine" else "available"
+            elif report.status in {"processing", "pending", "retry"}:
+                llm_status = "pending"
+            else:
+                llm_status = "failed"
+        results[record.id] = {
+            "raw_observations": observations.get(record.id, {}),
+            "sampling": {
+                "session_kind": "manual_sampling" if manual else "standard",
+                "duration_semantics": "manual_sampling_seconds" if manual else "session_duration_seconds",
+                "started_at": _as_utc(record.occurred_at), "ended_at": _as_utc(record.end_timestamp),
+                "duration_s": record.duration_s, "presence_state": record.presence_state,
+                "collection_state": record.collection_state, "temperature_c": record.temperature_c,
+                "humidity_pct": record.humidity_pct,
+            },
+            "processing": {
+                "analysis_complete": assessment is not None, "analysis_source": "rules",
+                "assessment_status": assessment.status if assessment else "pending",
+                "reliable": bool(assessment and assessment.reliable and not manual),
+                "risk_level": "not_evaluated" if manual else assessment.risk_level if assessment else "not_evaluated",
+                "message": assessment.message if assessment else "尚未完成规则处理",
+                "reasons": assessment.reasons if assessment else [], "llm_status": llm_status,
+            },
+        }
+    return results
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=value.tzinfo or timezone.utc).astimezone(timezone.utc)
 
 
 def authorize_household(
@@ -97,6 +208,8 @@ def evaluate_observations(
     quality: dict,
     observations: list[Observation],
 ) -> tuple[bool, list[str], str]:
+    if quality.get("session_kind") == "manual_sampling":
+        return False, ["manual_sampling_not_health_session"], "not_evaluated"
     reasons: list[str] = []
     if collection_state != "completed":
         reasons.append("collection_not_completed")
@@ -125,7 +238,9 @@ def create_assessment_version(db: Session, record: SessionRecord) -> Assessment:
     reliable, reasons, risk_level = evaluate_observations(
         record.collection_state, record.quality, observations
     )
-    if not reliable:
+    if is_manual_sampling(record):
+        message = "手动采样已完成规则处理；本记录仅用于硬件测试，无法据此作健康判断。"
+    elif not reliable:
         message = "本次无法可靠判断"
     elif risk_level == "redline":
         message = "检测到需进入安全流程的信号"
@@ -219,6 +334,10 @@ def ingest(db: Session, payload: DeviceSessionInput, api_key: str):
         return _duplicate_receipt(db, existing, digest)
     for dimension, item in payload.observations.items():
         extra = {"change_pct": item.change_pct} if item.change_pct is not None else {}
+        # Exhibition input keeps template similarity separate from confidence.
+        if item.template_similarity is not None or item.similarity_scale != "unknown":
+            extra["template_similarity"] = item.template_similarity
+            extra["similarity_scale"] = item.similarity_scale
         db.add(Observation(session_id=record.id, dimension=dimension, value=item.value,
                            confidence=item.confidence, missing_reason=item.missing_reason,
                            source=item.source, model_version=item.model_version, extra=extra))
@@ -272,7 +391,8 @@ def claim_session(db: Session, record: SessionRecord, claim: ClaimInput):
     )])
     db.flush()
     queue_redline_actions(db, record, replacement)
-    if settings.llm_proactive_enabled and (settings.llm_api_key or settings.llm_routing_enabled):
+    if (not is_manual_sampling(record) and settings.llm_proactive_enabled
+            and (settings.llm_api_key or settings.llm_routing_enabled)):
         now = datetime.now(timezone.utc)
         orchestration_key = f"agent.orchestrate:{record.id}:{replacement.version}"
         if not db.scalar(select(OutboxEvent).where(OutboxEvent.idempotency_key == orchestration_key)):
@@ -289,6 +409,8 @@ def claim_session(db: Session, record: SessionRecord, claim: ClaimInput):
 def queue_redline_actions(
     db: Session, record: SessionRecord, assignment: MemberAssignment
 ) -> list[AgentAction]:
+    if is_manual_sampling(record):
+        return []
     assessment = db.scalar(select(Assessment).where(
         Assessment.session_id == record.id, Assessment.active.is_(True)
     ))
@@ -415,6 +537,7 @@ def member_trend(
         .join(Assessment, Assessment.session_id == SessionRecord.id)
         .where(
             SessionRecord.household_id == household_id,
+            health_session_filter(),
             *window_filters,
             MemberAssignment.active.is_(True),
             MemberAssignment.assignment_status == "confirmed",
@@ -494,6 +617,7 @@ def member_trend(
         .join(Assessment, Assessment.session_id == SessionRecord.id)
         .where(
             SessionRecord.household_id == household_id,
+            health_session_filter(),
             MemberAssignment.active.is_(True),
             MemberAssignment.assignment_status == "confirmed",
             MemberAssignment.member_id == member_id,

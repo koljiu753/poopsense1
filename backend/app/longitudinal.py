@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .models import (
     Assessment, HealthActionFollowup, HouseholdMember, MemberAssignment, Observation, SessionRecord,
 )
-from .service import AuthContext, authorize_member_view
+from .service import AuthContext, authorize_member_view, health_session_filter, is_manual_sampling
 
 
 NORMAL_SHAPES = {"normal", "elongated"}
@@ -19,6 +19,7 @@ def _member_records(household_id: str, member_id: str):
     return (select(SessionRecord)
             .join(MemberAssignment, MemberAssignment.session_id == SessionRecord.id)
             .where(SessionRecord.household_id == household_id,
+                   health_session_filter(),
                    MemberAssignment.active.is_(True),
                    MemberAssignment.assignment_status == "confirmed",
                    MemberAssignment.member_id == member_id))
@@ -101,7 +102,7 @@ def reconcile_previous_followup(db: Session, household_id: str, member_id: str,
 
 def ensure_followup(db: Session, auth: AuthContext, member_id: str,
                     record: SessionRecord, report: dict[str, Any]) -> HealthActionFollowup | None:
-    if report.get("status") != "ready" or not report.get("reliable"):
+    if is_manual_sampling(record) or report.get("status") != "ready" or not report.get("reliable"):
         return None
     reconcile_previous_followup(db, auth.household_id, member_id, record)
     existing = db.scalar(select(HealthActionFollowup).where(

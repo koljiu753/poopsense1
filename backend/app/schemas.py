@@ -8,26 +8,42 @@ DataKind = Literal["unknown", "simulated", "hardware_test"]
 
 
 class ObservationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     value: str | None
-    confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False, strict=True)
     missing_reason: str | None = None
     source: Literal["sensor", "manual", "adapter"]
     model_version: str
-    change_pct: float | None = None
+    change_pct: float | None = Field(default=None, allow_inf_nan=False, strict=True)
+    template_similarity: float | None = Field(default=None, allow_inf_nan=False, strict=True)
+    similarity_scale: Literal["0_1", "0_100", "unknown"] = "unknown"
 
     @model_validator(mode="after")
     def missing_value_requires_reason(self):
-        if self.value is None and not self.missing_reason:
+        if self.value is None and (not self.missing_reason or not self.missing_reason.strip()):
             raise ValueError("missing_reason is required when value is null")
+        if self.template_similarity is not None:
+            if self.value is None:
+                raise ValueError("a missing observation cannot have template similarity")
+            upper = {"0_1": 1, "0_100": 100}.get(self.similarity_scale)
+            if upper is not None and not 0 <= self.template_similarity <= upper:
+                raise ValueError("template_similarity is outside the declared scale")
         return self
 
 
 class QualityInput(BaseModel):
-    overall_confidence: float = Field(ge=0, le=1)
+    model_config = ConfigDict(extra="forbid")
+
+    overall_confidence: float = Field(ge=0, le=1, allow_inf_nan=False, strict=True)
     reasons: list[str] = Field(default_factory=list)
+    session_kind: Literal["manual_sampling"] | None = None
+    duration_semantics: Literal["manual_sampling_seconds"] | None = None
 
 
 class MemberCandidateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     member_ref: str
     confidence: float = Field(ge=0, le=1)
 
@@ -53,8 +69,8 @@ class DeviceSessionInput(BaseModel):
     presence_state: Literal["present", "absent", "unknown"]
     collection_state: Literal["completed", "partial", "failed"]
     observations: dict[str, ObservationInput]
-    temperature_c: float | None = None
-    humidity_pct: float | None = Field(default=None, ge=0, le=100)
+    temperature_c: float | None = Field(default=None, allow_inf_nan=False)
+    humidity_pct: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
     quality: QualityInput
     member_candidates: list[MemberCandidateInput] = Field(default_factory=list)
 
@@ -69,10 +85,79 @@ class DeviceSessionInput(BaseModel):
         measured = int((self.end_timestamp - self.timestamp).total_seconds())
         if abs(measured - self.duration_s) > 5:
             raise ValueError("duration_s conflicts with timestamps")
+        manual = self.quality.session_kind == "manual_sampling"
+        if manual != (self.quality.duration_semantics == "manual_sampling_seconds"):
+            raise ValueError("manual sampling requires its matching duration_semantics")
+        if manual:
+            if self.data_kind not in {"simulated", "hardware_test"}:
+                raise ValueError("manual sampling requires an explicit test data_kind")
+            if self.presence_state != "unknown" or self.collection_state not in {"partial", "failed"}:
+                raise ValueError("manual sampling has unknown presence and partial or failed collection")
+            if self.temperature_c is not None or self.humidity_pct is not None or self.member_candidates:
+                raise ValueError("disabled sensors and member candidates must remain empty")
+            if self.quality.overall_confidence != 0 or not any(reason.strip() for reason in self.quality.reasons):
+                raise ValueError("manual sampling has no calibrated confidence and requires a quality reason")
+            allowed = {"shape": {None, "elongated", "compact", "scattered", "irregular"},
+                       "color": {None, "red", "green", "blue", "yellow"}, "odor": {None}}
+            if set(self.observations) != set(allowed):
+                raise ValueError("manual sampling requires shape, color and odor observations")
+            for dimension, observation in self.observations.items():
+                if observation.value not in allowed[dimension] or observation.confidence is not None:
+                    raise ValueError(f"invalid manual sampling {dimension} observation")
+                if dimension != "color" and (observation.template_similarity is not None or observation.similarity_scale != "unknown"):
+                    raise ValueError("template similarity is only supported for color")
+                if observation.change_pct is not None:
+                    raise ValueError("manual sampling does not establish a personal change percentage")
+            if self.observations["odor"].missing_reason != "sensor_disabled":
+                raise ValueError("disabled odor sensor requires sensor_disabled missing_reason")
+        elif any(item.template_similarity is not None or item.similarity_scale != "unknown"
+                 for item in self.observations.values()):
+            raise ValueError("template similarity requires explicit manual sampling semantics")
         return self
 
 
+class RawObservationResult(BaseModel):
+    value: str | None
+    confidence: float | None
+    missing_reason: str | None
+    source: str
+    model_version: str
+    change_pct: float | None = None
+    template_similarity: float | None = None
+    similarity_scale: Literal["0_1", "0_100", "unknown"] = "unknown"
+
+
+class SamplingResult(BaseModel):
+    session_kind: Literal["standard", "manual_sampling"]
+    duration_semantics: Literal["session_duration_seconds", "manual_sampling_seconds"]
+    started_at: datetime
+    ended_at: datetime
+    duration_s: int
+    presence_state: str
+    collection_state: str
+    temperature_c: float | None
+    humidity_pct: float | None
+
+
+class SessionProcessingResult(BaseModel):
+    analysis_complete: bool
+    analysis_source: Literal["rules"] = "rules"
+    assessment_status: str
+    reliable: bool
+    risk_level: str
+    message: str
+    reasons: list[str]
+    llm_status: Literal["not_applicable", "not_requested", "policy_only", "available", "failed", "pending"]
+
+
+class SessionEvidenceResult(BaseModel):
+    raw_observations: dict[str, RawObservationResult] = Field(default_factory=dict)
+    sampling: SamplingResult | None = None
+    processing: SessionProcessingResult | None = None
+
+
 class SessionReceipt(BaseModel):
+    processing: SessionProcessingResult | None = None
     data_kind: DataKind = "unknown"
     session_id: str
     correlation_id: str
@@ -83,12 +168,27 @@ class SessionReceipt(BaseModel):
     duplicate: bool
 
 
-class InboxItem(BaseModel):
+class InboxItem(SessionEvidenceResult):
     data_kind: DataKind = "unknown"
     session_id: str
     received_at: datetime
     candidates: list[dict[str, Any]]
     assignment_version: int
+
+
+class DeviceSessionResult(SessionEvidenceResult):
+    session_id: str
+    device_id: str
+    correlation_id: str
+    data_kind: DataKind
+    received_at: datetime
+    assignment_status: str
+
+
+class HouseholdSessionResult(DeviceSessionResult):
+    assignment_version: int
+    member_id: str | None = None
+    simulated: bool = False
 
 
 class ClaimInput(BaseModel):
@@ -666,7 +766,7 @@ class PoopVisualProfile(BaseModel):
     odor: PoopVisualDimension | None = None
 
 
-class MemberSessionResult(BaseModel):
+class MemberSessionResult(SessionEvidenceResult):
     data_kind: DataKind = "unknown"
     simulated: bool = False
     session_id: str

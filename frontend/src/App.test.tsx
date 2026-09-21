@@ -21,6 +21,7 @@ vi.mock("./api", async () => {
       simulateSensor: vi.fn(),
       createMember: vi.fn(),
       inbox: vi.fn(),
+      sessionById: vi.fn(),
       trend: vi.fn(),
       actionFollowups: vi.fn(),
       updateActionFollowup: vi.fn(),
@@ -811,6 +812,62 @@ describe("PoopSense core UI", () => {
         false,
       ),
     );
+  });
+
+  it("lets an inaccessible default household reconnect to its independently authorized test family", async () => {
+    mocked.members.mockImplementation(async configuration => {
+      if (configuration.householdId === "test_independent" && configuration.householdKey === "new-test-only-key") {
+        return [{ member_id: "test_owner", display_name: "联调成员", linked_to_current_user: true }];
+      }
+      throw new ApiError(401, "HOUSEHOLD_AUTH_FAILED");
+    });
+    mocked.inbox.mockResolvedValue([]);
+    const user = userEvent.setup();
+    render(<App />);
+    const recovery = await screen.findByRole("region", { name: "家庭连接恢复" });
+    await user.clear(within(recovery).getByLabelText("家庭 ID"));
+    await user.type(within(recovery).getByLabelText("家庭 ID"), "test_independent");
+    await user.clear(within(recovery).getByLabelText("家庭访问密钥"));
+    await user.type(within(recovery).getByLabelText("家庭访问密钥"), "new-test-only-key");
+    await user.click(within(recovery).getByRole("button", { name: "保存并重新连接" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/home?member=test_owner"));
+    expect(screen.queryByRole("region", { name: "家庭连接恢复" })).not.toBeInTheDocument();
+    expect(mocked.sessions).toHaveBeenCalledWith(expect.objectContaining({ householdId: "test_independent", householdKey: "new-test-only-key" }), "test_owner");
+    expect(window.location.href).not.toContain("new-test-only-key");
+    expect(JSON.parse(sessionStorage.getItem("poopsense-config-v1")!)).toEqual({ apiBase: "", householdId: "test_independent", householdKey: "new-test-only-key" });
+  });
+
+  it("keeps partial raw observations visible before and after a test record is claimed", async () => {
+    window.history.replaceState(null, "", "/#/health/records?member=m_001");
+    const details = {
+      raw_observations: { shape: { value: "scattered", confidence: null, missing_reason: null, source: "adapter", model_version: "hardware-test" }, color: { value: "blue", confidence: null, missing_reason: null, source: "adapter", model_version: "hardware-test", template_similarity: 68, similarity_scale: "unknown" as const } },
+      sampling: { session_kind: "manual_sampling" as const, duration_semantics: "manual_sampling_seconds" as const, duration_s: 9, started_at: "2026-09-21T08:00:00Z", ended_at: "2026-09-21T08:00:09Z", presence_state: "unknown", collection_state: "partial", temperature_c: null, humidity_pct: null },
+      processing: { analysis_complete: true, analysis_source: "rules" as const, assessment_status: "unable_to_determine", reliable: false, risk_level: "not_evaluated", message: "本次无法可靠判断", reasons: [], llm_status: "not_applicable" as const },
+    };
+    mocked.inbox.mockResolvedValue([{ session_id: "test_partial", received_at: "2026-09-21T08:00:09Z", candidates: [], assignment_version: 1, data_kind: "hardware_test", ...details }]);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText(/原始观测与处理状态/, { selector: ".claim-row summary" }));
+    expect(screen.getByRole("region", { name: "形状原始观测" })).toHaveTextContent("分散状（scattered）");
+    expect(screen.getByRole("region", { name: "颜色原始观测" })).toHaveTextContent("68 · 量纲：未说明");
+    await user.selectOptions(screen.getByLabelText("这是谁的记录？"), "m_001");
+    mocked.inbox.mockResolvedValue([]);
+    mocked.sessions.mockResolvedValue([{ session_id: "test_partial", occurred_at: "2026-09-21T08:00:00Z", assignment_version: 2, assessment_status: "unable_to_determine", risk_level: "not_evaluated", message: "本次无法可靠判断", data_kind: "hardware_test", visual_profile: null, ...details }]);
+    await user.click(screen.getByRole("button", { name: "确认归属" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "确认归属" })).not.toBeInTheDocument());
+    const records = screen.getByRole("region", { name: "最近记录" });
+    await user.click(await within(records).findByText(/原始观测与处理状态/, { selector: "summary" }));
+    expect(within(records).getByRole("region", { name: "形状原始观测" })).toHaveTextContent("分散状（scattered）");
+    expect(within(records).getByRole("region", { name: "记录处理状态" })).toHaveTextContent("无法可靠判断健康状态");
+    expect(mocked.agentChat).not.toHaveBeenCalled();
+    expect(mocked.analyzeSession).not.toHaveBeenCalled();
+    await user.click(within(records).getByRole("button", { name: "查看这条报告 →" }));
+    expect(await screen.findByRole("button", { name: "← 返回" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "形状原始观测" })).toHaveTextContent("分散状（scattered）");
+    expect(screen.getByRole("region", { name: "采样信息" })).toHaveTextContent("不是如厕时长");
+    await act(async () => { window.location.hash = "#/chat?member=m_001"; });
+    expect(await screen.findByRole("heading", { name: "聊聊你的记录" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "形状原始观测" })).not.toBeInTheDocument();
   });
 
   it("loads chat while the inbox is slow and discovers pending records without disturbing the reply or draft", async () => {

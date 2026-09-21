@@ -9,7 +9,54 @@ export type Member = {
   linked_to_current_user: boolean;
 };
 export type DataKind = "unknown" | "simulated" | "hardware_test";
-export type InboxItem = {
+export type RawObservation = {
+  value: string | null;
+  confidence: number | null;
+  missing_reason: string | null;
+  source: string;
+  model_version: string;
+  change_pct?: number | null;
+  template_similarity?: number | null;
+  similarity_scale?: "0_1" | "0_100" | "unknown" | null;
+};
+export type RecordSampling = {
+  session_kind: "standard" | "manual_sampling";
+  duration_semantics: "session_duration_seconds" | "manual_sampling_seconds";
+  started_at: string;
+  ended_at: string;
+  duration_s: number;
+  presence_state: string;
+  collection_state: string;
+  temperature_c: number | null;
+  humidity_pct: number | null;
+};
+export type RecordProcessing = {
+  analysis_complete: boolean;
+  analysis_source: "rules";
+  assessment_status: string;
+  reliable: boolean;
+  risk_level: string;
+  message: string;
+  reasons: string[];
+  llm_status?: "not_applicable" | "not_requested" | "policy_only" | "available" | "failed" | "pending";
+};
+export type RecordObservationDetails = {
+  raw_observations?: Record<string, RawObservation>;
+  sampling?: RecordSampling;
+  processing?: RecordProcessing;
+};
+export type HouseholdSession = RecordObservationDetails & {
+  session_id: string;
+  device_id: string;
+  correlation_id: string;
+  received_at: string;
+  data_kind?: DataKind;
+  simulated?: boolean;
+  assignment_status: string;
+  assignment_version: number;
+  member_id: string | null;
+};
+export type InboxItem = RecordObservationDetails & {
   data_kind?: DataKind;
   simulated?: boolean;
   session_id: string;
@@ -17,7 +64,7 @@ export type InboxItem = {
   candidates: { member_ref: string; confidence: number }[];
   assignment_version: number;
 };
-export type MemberSession = {
+export type MemberSession = RecordObservationDetails & {
   data_kind?: DataKind;
   simulated?: boolean;
   session_id: string;
@@ -500,6 +547,8 @@ export const api = {
     }),
   inbox: (c: AppConfig, signal?: AbortSignal) =>
     request<InboxItem[]>(c, `/api/v1/households/${c.householdId}/claim-inbox`, { signal }),
+  sessionById: (c: AppConfig, sessionId: string, signal?: AbortSignal) =>
+    request<HouseholdSession>(c, `/api/v1/households/${encodeURIComponent(c.householdId)}/sessions/${encodeURIComponent(sessionId)}`, { signal }),
   simulationStatus: (c: AppConfig) => request<{ enabled: boolean; reason?: string | null }>(c, `/api/v1/households/${c.householdId}/sensor-simulation`),
   simulateSensor: (c: AppConfig, payload: { request_id: string; timestamp: string; scenario: string; member_id: string | null }) =>
     request<{ session_id: string; duplicate: boolean; assignment_status: string }>(c,

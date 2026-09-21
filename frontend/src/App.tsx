@@ -7,6 +7,9 @@ import PetAvatar, { PET_SKINS, petSkinLabel } from "./PetAvatar";
 import WeeklyReportPanel from "./WeeklyReportPanel";
 import useClaimInbox from "./useClaimInbox";
 import RecordSource, { recordSourceLabel } from "./RecordSource";
+import RecordObservations from "./RecordObservations";
+import RecordLookup from "./RecordLookup";
+import FamilyConnectionSettings from "./FamilyConnectionSettings";
 import { useAppNavigation, type View, type HealthSection } from "./useAppNavigation";
 import { SensorSimulator } from "./SensorSimulator";
 import {
@@ -94,6 +97,7 @@ function memberName(member: Member) {
 
 export default function App() {
   const [config, setConfig] = useState(loadConfig);
+  const [connectionVersion, setConnectionVersion] = useState(0);
   const currentConfig = useRef(config);
   currentConfig.current = config;
   const { items: inbox, error: inboxError, refresh: refreshInbox, beginClaim: beginInboxClaim } = useClaimInbox(config);
@@ -311,6 +315,15 @@ export default function App() {
     if (memberId === selectedMember) return;
     navigate({ memberId, sessionId: "", sourceId: "" }, { preservePosition: true });
   }
+  function saveConnection(next: AppConfig) {
+    sessionStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(next));
+    setMembers([]);
+    setMembersReady(false);
+    setVisitedViews(new Set(["home"]));
+    setConnectionVersion(version => version + 1);
+    setConfig(next);
+    navigate({ view: "home", memberId: "", sessionId: "", sourceId: "", chat: false }, { replace: true });
+  }
   const nav = [
     { id: "home" as const, icon: "⌂", label: "首页" },
     { id: "health" as const, icon: "↗", label: "健康", count: inbox.length },
@@ -318,7 +331,7 @@ export default function App() {
     { id: "settings" as const, icon: "◎", label: "我的" },
   ];
   return (
-    <div className={`app-shell experience view-${view}`}>
+    <div className={`app-shell experience view-${view}`} key={connectionVersion}>
       <aside className="sidebar">
         <button className="brand" onClick={() => setView("home")}>
           <span className="brand-mark">✦</span>
@@ -377,6 +390,11 @@ export default function App() {
               <button onClick={() => void refreshCore()}>重试</button>
             </div>
           )}
+          {!members.length && (error || membersReady) && <section className="connection-recovery" aria-label="家庭连接恢复">
+            <h2>连接你的测试家庭</h2>
+            <p>使用联调负责人提供的家庭 ID 和家庭访问密钥，即可查看同一环境里的记录。</p>
+            <FamilyConnectionSettings config={config} onSave={saveConnection} initiallyOpen />
+          </section>}
           {memberUnavailable ? <section className="page route-unavailable" role="alert"><h1>这个成员暂时无法查看</h1><p>当前家庭中没有这个成员，或查看权限已经变化。请选择可查看的成员继续。</p><button onClick={() => navigate({ view: "home", memberId: members[0]?.member_id ?? "", sessionId: "", sourceId: "" }, { replace: true })}>回到当前家庭</button></section> : <>
           {(view === "home" || visitedViews.has("home")) && (<div hidden={view !== "home"}>
             <Home
@@ -463,16 +481,7 @@ export default function App() {
               members={members}
               selectedMember={selectedMember}
               onMembersChanged={() => void refreshCore()}
-              onSave={(next) => {
-                sessionStorage.setItem(
-                  CONFIG_STORAGE_KEY,
-                  JSON.stringify(next),
-                );
-                setMembers([]);
-                setMembersReady(false);
-                setConfig(next);
-                navigate({ view: "home", memberId: "", sessionId: "", sourceId: "" }, { replace: true });
-              }}
+              onSave={saveConnection}
             />
           </div>)}
           </>}
@@ -1210,6 +1219,7 @@ function AgentDoctor({
           {latestSession ? <div className="chat-header-actions"><button className="chat-jump" onClick={() => document.getElementById("doctor-message")?.focus()}>直接提问 ↓</button></div> : null}
         </div>
       </div>
+      {autoSession && <RecordObservations record={autoSession} expanded={autoSession.sampling?.session_kind === "manual_sampling"} />}
       <div className="doctor-layout">
         <aside>
           <img src="/poopsense-mascot-pop-v1.webp" alt="PoopSense 助手形象" />
@@ -1439,6 +1449,7 @@ function Health({
         busy={busy}
         onAssign={onAssign}
       />}
+      <RecordLookup config={config} members={members} onRefreshInbox={onRetryInbox} />
       <section className="progressive-panel record-details" aria-label="最近记录">
         <header className="records-title"><b>最近记录</b><span>{recordsLoading ? "正在读取…" : recordsError && !sessions.length ? "暂未读到" : `${sessions.length} 次已归属记录`}</span></header>
         <article className="history">
@@ -1447,12 +1458,13 @@ function Health({
         {sessions.slice(0, 2).map((item) => (
           <div className="history-row" key={item.session_id}>
             <span className={`record-avatar ${item.risk_level}`}><img src={sessionVisual(item).asset} alt={sessionVisual(item).label} /></span>
-            <span>
+            <div className="record-summary">
               <b>{new Date(item.occurred_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</b>
               <small>{item.message}</small>
               <RecordSource record={item} />
               <button className="history-report-link" onClick={() => onOpenReport(item)}>查看这条报告 →</button>
-            </span>
+              <RecordObservations record={item} />
+            </div>
             <Correction
               session={item}
               members={members}
@@ -1467,14 +1479,15 @@ function Health({
             {sessions.slice(2).map((item) => (
               <div className="history-row" key={item.session_id}>
                 <span className={`record-avatar ${item.risk_level}`}><img src={sessionVisual(item).asset} alt={sessionVisual(item).label} /></span>
-                <span>
+                <div className="record-summary">
                   <b>
                     {new Date(item.occurred_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </b>
                   <small>{item.message}</small>
                   <RecordSource record={item} />
                   <button className="history-report-link" onClick={() => onOpenReport(item)}>查看这条报告 →</button>
-                </span>
+                  <RecordObservations record={item} />
+                </div>
                 <Correction
                   session={item}
                   members={members}
@@ -1943,6 +1956,7 @@ function InboxPanel({
           >
             确认归属
           </button>
+          <RecordObservations record={item} />
         </div>
       ))}
     </article>
@@ -2546,7 +2560,6 @@ function Settings({
   onSave: (c: AppConfig) => void;
   onMembersChanged: () => void;
 }) {
-  const [draft, setDraft] = useState(config);
   const [devices, setDevices] = useState<Device[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
@@ -2911,45 +2924,7 @@ function Settings({
           </details>
         </article>
       </div>
-      <details className="advanced-settings">
-        <summary>开发连接设置</summary>
-        <div className="form-card">
-          <label>
-            API 地址
-            <input
-              value={draft.apiBase}
-              onChange={(e) =>
-                setDraft({
-                  ...draft,
-                  apiBase: e.target.value,
-                })
-              }
-            />
-          </label>
-          <label>
-            家庭 ID
-            <input
-              value={draft.householdId}
-              onChange={(e) =>
-                setDraft({ ...draft, householdId: e.target.value })
-              }
-            />
-          </label>
-          <label>
-            家庭访问密钥
-            <input
-              type="password"
-              value={draft.householdKey}
-              onChange={(e) =>
-                setDraft({ ...draft, householdKey: e.target.value })
-              }
-            />
-          </label>
-          <button className="comic-button wide" onClick={() => onSave({ ...draft, apiBase: draft.apiBase.trim().replace(/\/+$/, "") })}>
-            保存并重新连接
-          </button>
-        </div>
-      </details>
+      <FamilyConnectionSettings config={config} onSave={onSave} />
     </section>
   );
 }

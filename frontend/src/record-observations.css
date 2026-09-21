@@ -1,0 +1,35 @@
+.experience .record-observations { min-width: 0; margin-top: 10px; border: 2px solid var(--ink); border-radius: 12px; background: var(--cream, #fff8e9); color: var(--ink); font-size: 13px; }
+.experience .record-observations > summary { cursor: pointer; padding: 12px; min-height: 44px; font-weight: 700; overflow-wrap: anywhere; }
+.experience .record-summary { min-width: 0; }
+.experience .doctor-page > .record-observations { margin-bottom: 18px; }
+.experience .record-observations code { display: block; margin-top: 5px; color: var(--blue); font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+.experience .record-observations-body { padding: 0 12px 12px; }
+.experience .record-observations .observation-boundary { padding: 10px; background: var(--yellow); border-radius: 8px; font-size: 12px; line-height: 1.7; }
+.experience .raw-observations-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.experience .raw-observation { min-width: 0; background: #fff; border: 1px solid var(--ink); border-radius: 8px; padding: 10px; }
+.experience .record-observations h3 { font-size: 15px; margin: 8px 0; }
+.experience .record-observations dl { display: grid; grid-template-columns: minmax(80px, .4fr) minmax(0, 1fr); gap: 6px 10px; line-height: 1.6; margin: 10px 0; }
+.experience .record-observations dt { color: var(--muted); }
+.experience .record-observations dd { margin: 0; overflow-wrap: anywhere; }
+.experience .raw-observation dl { display: block; }
+.experience .raw-observation dt { margin-top: 8px; }
+.experience .record-observations :is(p, li, b, time) { overflow-wrap: anywhere; line-height: 1.65; }
+.experience .record-processing { border-top: 2px dashed var(--ink); margin-top: 14px; padding-top: 6px; }
+.experience .record-processing > p { margin: 6px 0; }
+.experience .record-processing details summary { min-height: 44px; padding-block: 12px; cursor: pointer; }
+.experience .claim-row > .record-observations { grid-column: 1 / -1; width: 100%; }
+.experience .record-search { margin: 16px 0; padding: 14px; border: 2px solid var(--ink); border-radius: 14px; background: #fff; }
+.experience .record-search form { display: flex; gap: 8px; align-items: end; }
+.experience .record-search label { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; }
+.experience .record-search input { width: 100%; min-width: 0; margin-top: 6px; font-size: 16px; min-height: 44px; padding: 10px; border: 2px solid var(--ink); border-radius: 8px; }
+.experience .record-search button { min-height: 44px; padding: 8px 12px; white-space: normal; }
+.experience .record-search :is(p, code) { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.experience .record-search-result { margin-top: 14px; }
+.experience .connection-settings .connection-note { font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.experience .connection-recovery { margin: 16px 0; padding: 16px; border: 2px solid var(--ink); border-radius: 16px; background: var(--yellow); }
+.experience .connection-recovery h2 { margin: 0 0 10px; font-size: 21px; }
+@media (max-width: 720px) {
+  .experience .raw-observations-grid { grid-template-columns: 1fr; }
+  .experience .raw-observation dl { display: grid; }
+  .experience .raw-observation dt { margin-top: 0; }
+}

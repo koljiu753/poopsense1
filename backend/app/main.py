@@ -8,6 +8,8 @@ import uuid
 import os
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
@@ -23,7 +25,7 @@ from .models import (
     UserNotification,
 )
 from .schemas import (
-    AssessmentResult, ClaimInput, ClaimResult, DeviceSessionInput, GrantInput,
+    AssessmentResult, ClaimInput, ClaimResult, DeviceSessionInput, DeviceSessionResult, HouseholdSessionResult, GrantInput,
     GrantResult, HouseholdMemberCreateInput, HouseholdMemberResult, InboxItem, MemberSessionResult, MemberTrend, PoopVisualDimension, PoopVisualProfile,
     AgentActionResult, AgentChatInput, AgentChatResult, AgentConversationResult,
     AgentConversationSummary, AgentMessageResult, AgentStatusResult,
@@ -46,6 +48,7 @@ from .schemas import (
 from .service import (
     authorize_household, authorize_member_view, claim_session, create_assessment_version,
     grant_family_view, hash_secret, ingest, member_trend, revoke_family_view,
+    authenticate_device_key, household_session_record, is_manual_sampling, is_simulated_record, session_evidence_map,
 )
 from .agent import analyze_session as agent_analyze_session, chat as agent_chat, close_model_client, resume_paused_chat
 from .model_provider import provider_name
@@ -238,6 +241,18 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(RequestValidationError)
+async def device_contract_validation_error(request: Request, exc: RequestValidationError):
+    if request.url.path == "/api/v1/device-sessions":
+        # Invalid hardware JSON can contain NaN/Infinity. Echoing its input in
+        # the default error body would itself fail JSON serialization with 500.
+        return JSONResponse(status_code=422, content={"detail": [
+            {key: error[key] for key in ("type", "loc", "msg") if key in error}
+            for error in exc.errors()
+        ]})
+    return await request_validation_exception_handler(request, exc)
+
+
 @app.middleware("http")
 async def operational_headers(request: Request, call_next):
     supplied_request_id = request.headers.get("x-request-id", "")
@@ -267,6 +282,11 @@ async def operational_headers(request: Request, call_next):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/v1/openapi.json", include_in_schema=False)
+def api_contract():
+    return app.openapi()
 
 
 @app.get("/ready")
@@ -508,6 +528,7 @@ def receive_device_session(
 ):
     record, assignment, assessment, duplicate = ingest(db, payload, x_device_key)
     return SessionReceipt(
+        processing=session_evidence_map(db, [record])[record.id]["processing"],
         data_kind=record.data_kind,
         session_id=record.external_session_id,
         correlation_id=record.correlation_id,
@@ -516,6 +537,53 @@ def receive_device_session(
         assessment_status=assessment.status,
         message=assessment.message,
         duplicate=duplicate,
+    )
+
+
+@app.get("/api/v1/devices/{device_id}/sessions/{session_id}", response_model=DeviceSessionResult)
+def device_session_result(device_id: str, session_id: str,
+                          x_device_key: str = Header(...), db: Session = Depends(get_db)):
+    binding = authenticate_device_key(db, device_id, x_device_key)
+    record = db.scalar(select(SessionRecord).where(
+        SessionRecord.device_id == device_id, SessionRecord.external_session_id == session_id,
+        SessionRecord.household_id == binding.household_id,
+    ))
+    if record is None:
+        raise HTTPException(404, detail={"code": "SESSION_NOT_FOUND"})
+    assignment = db.scalar(select(MemberAssignment).where(
+        MemberAssignment.session_id == record.id, MemberAssignment.active.is_(True),
+    ))
+    # This response deliberately excludes member IDs, candidates and report text.
+    return DeviceSessionResult(
+        session_id=record.external_session_id, device_id=record.device_id,
+        correlation_id=record.correlation_id, data_kind=record.data_kind,
+        received_at=record.received_at.replace(tzinfo=record.received_at.tzinfo or timezone.utc),
+        assignment_status=assignment.assignment_status if assignment else "pending_claim",
+        **session_evidence_map(db, [record])[record.id],
+    )
+
+
+@app.get("/api/v1/households/{household_id}/sessions/{session_id}", response_model=HouseholdSessionResult)
+def household_session_detail(household_id: str, session_id: str,
+                             x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    auth = authorize_household(db, household_id, x_household_key)
+    record = household_session_record(db, household_id, session_id)
+    assignment = db.scalar(select(MemberAssignment).where(
+        MemberAssignment.session_id == record.id, MemberAssignment.active.is_(True),
+    ))
+    if not assignment:
+        raise HTTPException(409, detail={"code": "ASSIGNMENT_STATE_MISSING"})
+    if assignment.assignment_status == "confirmed" and assignment.member_id:
+        authorize_member_view(db, auth, assignment.member_id)
+    elif auth.role not in {"owner", "caregiver"}:
+        raise HTTPException(403, detail={"code": "HOUSEHOLD_ROLE_DENIED"})
+    return HouseholdSessionResult(
+        session_id=record.external_session_id, device_id=record.device_id,
+        correlation_id=record.correlation_id, data_kind=record.data_kind,
+        received_at=record.received_at.replace(tzinfo=record.received_at.tzinfo or timezone.utc),
+        assignment_status=assignment.assignment_status, assignment_version=assignment.version,
+        member_id=assignment.member_id, simulated=is_simulated_record(record),
+        **session_evidence_map(db, [record])[record.id],
     )
 
 
@@ -552,7 +620,10 @@ def simulate_sensor(household_id: str, payload: SensorSimulationInput,
     # Only synthetic presets in the seeded demonstration household. Never expose
     # device credentials to a browser or offer arbitrary observation injection.
     session_id = f"sim_{payload.request_id.hex}"
-    existing = db.scalar(select(SessionRecord).where(SessionRecord.external_session_id == session_id))
+    existing = db.scalar(select(SessionRecord).where(
+        SessionRecord.external_session_id == session_id, SessionRecord.device_id == "dev_001",
+        SessionRecord.household_id == household_id,
+    ))
     now = datetime.now(timezone.utc)
     if payload.timestamp.tzinfo is None:
         raise HTTPException(422, detail={"code": "TIMEZONE_REQUIRED"})
@@ -609,21 +680,18 @@ def claim_inbox(household_id: str, x_household_key: str = Header(...), db: Sessi
                MemberAssignment.assignment_status == "pending_claim")
         .order_by(SessionRecord.received_at.desc())
     ).all()
+    evidence = session_evidence_map(db, [record for record, _ in rows])
     return [InboxItem(session_id=s.external_session_id, received_at=s.received_at,
                       data_kind=s.data_kind,
-                      candidates=a.candidates, assignment_version=a.version) for s, a in rows]
+                      candidates=a.candidates, assignment_version=a.version,
+                      **evidence[s.id]) for s, a in rows]
 
 
 @app.post("/api/v1/households/{household_id}/sessions/{session_id}/claim", response_model=ClaimResult)
 def claim(household_id: str, session_id: str, payload: ClaimInput,
           x_household_key: str = Header(...), db: Session = Depends(get_db)):
     authorize_household(db, household_id, x_household_key, {"owner", "caregiver"})
-    record = db.scalar(select(SessionRecord).where(
-        SessionRecord.external_session_id == session_id,
-        SessionRecord.household_id == household_id,
-    ))
-    if not record:
-        raise HTTPException(status_code=404, detail={"code": "SESSION_NOT_FOUND"})
+    record = household_session_record(db, household_id, session_id)
     assignment = claim_session(db, record, payload)
     return ClaimResult(session_id=session_id, member_id=assignment.member_id,
                        assignment_status=assignment.assignment_status, version=assignment.version)
@@ -636,12 +704,7 @@ def claim(household_id: str, session_id: str, payload: ClaimInput,
 def reassess(household_id: str, session_id: str, x_household_key: str = Header(...),
              db: Session = Depends(get_db)):
     authorize_household(db, household_id, x_household_key, {"owner", "caregiver"})
-    record = db.scalar(select(SessionRecord).where(
-        SessionRecord.external_session_id == session_id,
-        SessionRecord.household_id == household_id,
-    ))
-    if not record:
-        raise HTTPException(status_code=404, detail={"code": "SESSION_NOT_FOUND"})
+    record = household_session_record(db, household_id, session_id)
     assessment = create_assessment_version(db, record)
     db.commit()
     return AssessmentResult(
@@ -1266,6 +1329,7 @@ def member_sessions(household_id: str, member_id: str,
         .order_by(SessionRecord.occurred_at.desc())
         .limit(50)
     ).all()
+    session_evidence = session_evidence_map(db, [record for record, _, _ in rows])
     observations_by_session: dict[int, dict[str, Observation]] = {}
     if rows:
         record_ids = [record.id for record, _, _ in rows]
@@ -1298,15 +1362,11 @@ def member_sessions(household_id: str, member_id: str,
         evidence = observations_by_session.get(record.id, {})
         shape = evidence.get("shape")
         variant = shape_variants.get(shape.value if shape else "", "uncertain")
-        reliable_visual = assessment.reliable and variant != "uncertain"
+        reliable_visual = assessment.reliable and not is_manual_sampling(record) and variant != "uncertain"
         results.append(MemberSessionResult(
+            **session_evidence[record.id],
             data_kind=record.data_kind,
-            simulated=record.data_kind == "simulated" or (
-                record.data_kind == "unknown" and (
-                    record.model_version == "sensor-simulation-v1"
-                    or record.external_session_id.startswith("demo_")
-                )
-            ),
+            simulated=is_simulated_record(record),
             session_id=record.external_session_id,
             occurred_at=record.occurred_at if record.occurred_at.tzinfo else record.occurred_at.replace(tzinfo=timezone.utc),
             assignment_version=assignment.version, assessment_status=assessment.status,

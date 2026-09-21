@@ -34,6 +34,11 @@ HISTORY = "/api/v1/households/hh_001/members/m_001/sessions"
 def legacy_hash(payload):
     # The old schema has exactly these fields, with all original defaults kept.
     data = payload.model_dump(mode="json", exclude={"data_kind"})
+    data["quality"].pop("session_kind", None)
+    data["quality"].pop("duration_semantics", None)
+    for item in data["observations"].values():
+        item.pop("template_similarity", None)
+        item.pop("similarity_scale", None)
     raw = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()
 

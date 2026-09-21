@@ -69,6 +69,10 @@ def child_read():
         assert response.status_code == 200
         row = next(r for r in response.json() if r['session_id'] == 'ci_persisted')
         assert row['data_kind'] == 'hardware_test'
+        manual = next(r for r in response.json() if r['session_id'] == 'ci_manual')
+        assert manual['raw_observations']['color']['template_similarity'] == 82.3
+        assert manual['sampling']['session_kind'] == 'manual_sampling'
+        assert manual['processing']['assessment_status'] == 'unable_to_determine'
     print('Fresh application process read the claimed test record.', flush=True)
 
 
@@ -153,6 +157,31 @@ def main():
             claim = client.post('/api/v1/households/hh_001/sessions/ci_persisted/claim',
                                 headers=household_headers, json={'member_id': 'm_001'})
             assert claim.status_code == 200, claim.text
+            manual = deepcopy(payload)
+            manual.update(session_id='ci_manual', correlation_id='cor_ci_manual', data_kind='simulated')
+            manual['quality'].update(session_kind='manual_sampling',
+                                     duration_semantics='manual_sampling_seconds')
+            manual['observations']['shape'].update(value='elongated', missing_reason=None)
+            manual['observations']['color'].update(value='red', missing_reason=None,
+                template_similarity=82.3, similarity_scale='0_100')
+            manual['observations']['odor']['missing_reason'] = 'sensor_disabled'
+            received = client.post('/api/v1/device-sessions', json=manual, headers=device_headers)
+            assert received.status_code == 202, received.text
+            manual_url = '/api/v1/devices/dev_001/sessions/ci_manual'
+            detail = client.get(manual_url, headers=device_headers)
+            assert detail.status_code == 200, detail.text
+            assert detail.json()['raw_observations']['color']['template_similarity'] == 82.3
+            assert detail.json()['processing']['analysis_complete'] is True
+            assert detail.json()['processing']['assessment_status'] == 'unable_to_determine'
+            assert detail.json()['processing']['llm_status'] == 'not_applicable'
+            assert 'member_id' not in detail.json()
+            changed_score = deepcopy(manual)
+            changed_score['observations']['color']['template_similarity'] = 82.4
+            assert client.post('/api/v1/device-sessions', json=changed_score, headers=device_headers).status_code == 409
+            assert client.get(manual_url, headers={'X-Device-Key': private_device_key}).status_code == 401
+            manual_claim = client.post('/api/v1/households/hh_001/sessions/ci_manual/claim',
+                headers=household_headers, json={'member_id': 'm_001'})
+            assert manual_claim.status_code == 200, manual_claim.text
             private_payload = deepcopy(payload)
             private_payload.update(session_id='ci_private', correlation_id='cor_ci_private',
                                    device_id=workspace.device_id, household_id=workspace.household_id)
