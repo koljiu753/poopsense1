@@ -10,6 +10,8 @@ import RecordSource, { recordSourceLabel } from "./RecordSource";
 import RecordObservations from "./RecordObservations";
 import RecordLookup, { type RecordLookupUpdate } from "./RecordLookup";
 import FamilyConnectionSettings from "./FamilyConnectionSettings";
+import DemoLive from "./DemoLive";
+import ResultArrivalFrame from "./ResultArrivalFrame";
 import { useAppNavigation, type View, type HealthSection } from "./useAppNavigation";
 import { SensorSimulator } from "./SensorSimulator";
 import {
@@ -163,8 +165,8 @@ export default function App() {
   const feedRevision = useRef(0);
   const observedSessions = useRef(new Set<string>());
   useEffect(() => {
-    if (selectedMember && !route.memberId) navigate({ memberId: selectedMember }, { replace: true, preservePosition: true });
-  }, [selectedMember, route.memberId, navigate]);
+    if (view !== "demo" && selectedMember && !route.memberId) navigate({ memberId: selectedMember }, { replace: true, preservePosition: true });
+  }, [selectedMember, route.memberId, navigate, view]);
   // Browser history can switch members too; clear stale UI before painting the next scope.
   useLayoutEffect(() => {
     feedRevision.current += 1;
@@ -176,7 +178,7 @@ export default function App() {
     setTrend(null);
   }, [selectedMember, config]);
   useEffect(() => {
-    const titles = { home: "首页", health: { records: "健康记录", actions: "行动回看", trends: "长期趋势" }[healthSection], social: "广场", settings: "我的", doctor: "记录报告", result: "新记录" };
+    const titles = { home: "首页", health: { records: "健康记录", actions: "行动回看", trends: "长期趋势" }[healthSection], social: "广场", settings: "我的", doctor: "记录报告", result: "新记录", demo: "硬件演示" };
     document.title = `${titles[view]} · PoopSense`;
   }, [view, healthSection]);
   const coreRevision = useRef(0);
@@ -374,6 +376,7 @@ export default function App() {
                       doctor: "这次的身体信号",
                       social: "便便岛 · 一起聊聊",
                       settings: "我的 · PoopSense",
+                      demo: "硬件演示 · PoopSense",
                     } as const
                   )[view]}
             </b>
@@ -397,7 +400,9 @@ export default function App() {
             <p>使用联调负责人提供的家庭 ID 和家庭访问密钥，即可查看同一环境里的记录。</p>
             <FamilyConnectionSettings config={config} onSave={saveConnection} initiallyOpen />
           </section>}
-          {memberUnavailable ? <section className="page route-unavailable" role="alert"><h1>这个成员暂时无法查看</h1><p>当前家庭中没有这个成员，或查看权限已经变化。请选择可查看的成员继续。</p><button onClick={() => navigate({ view: "home", memberId: members[0]?.member_id ?? "", sessionId: "", sourceId: "" }, { replace: true })}>回到当前家庭</button></section> : <>
+          {(view === "home" || view === "health" && healthSection === "records") && <aside className="demo-entry"><p><b>硬件演示</b> · 上传后自动呈现形象与 AI 解读</p><button type="button" onClick={() => navigate({ view: "demo", memberId: "", sessionId: "", chat: false })}>打开硬件演示</button></aside>}
+          {(view === "demo" || visitedViews.has("demo")) && <div hidden={view !== "demo"}><DemoLive config={config} active={view === "demo"} onSettings={() => setView("settings")} onRecords={() => navigate({ view: "health", section: "records" })} /></div>}
+          {memberUnavailable && view !== "demo" ? <section className="page route-unavailable" role="alert"><h1>这个成员暂时无法查看</h1><p>当前家庭中没有这个成员，或查看权限已经变化。请选择可查看的成员继续。</p><button onClick={() => navigate({ view: "home", memberId: members[0]?.member_id ?? "", sessionId: "", sourceId: "" }, { replace: true })}>回到当前家庭</button></section> : <>
           {(view === "home" || visitedViews.has("home")) && (<div hidden={view !== "home"}>
             <Home
               active={view === "home"}
@@ -674,21 +679,12 @@ function ResultArrival({
     return () => window.clearTimeout(timer);
   }, [session.session_id]);
   return (
-    <section className="result-arrival" data-risk={session.risk_level} aria-live="polite">
-      <div className="result-burst" aria-hidden="true">新记录</div>
-      <img
+    <ResultArrivalFrame risk={session.risk_level} visual={<img
         src={visual.asset}
         alt={`PoopSense 正在读取新的身体信号：${visual.label}`}
         data-visual-variant={visual.variant}
-      />
-      <div className="result-arrival-copy">
-        <small>检测到新的身体信号</small>
-        <h1>收到，这次交给我。</h1>
-        <p>{session.message}</p>
-        <span><i /> 记录已收到，即将打开分析</span>
-      </div>
-      <button onClick={onComplete}>跳过动画</button>
-    </section>
+      />} eyebrow="检测到新的身体信号" title="收到，这次交给我。" description={session.message}
+      status="记录已收到，即将打开分析" onSkip={onComplete} />
   );
 }
 

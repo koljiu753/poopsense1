@@ -72,6 +72,11 @@ export type DemoExplanationResult = {
   error_message: string | null;
   retry_allowed: boolean;
 };
+export type DemoSessionFeed = {
+  items: (HouseholdSession & { cursor_id: number })[];
+  next_after_id: number;
+  has_more: boolean;
+};
 export type InboxItem = RecordObservationDetails & {
   data_kind?: DataKind;
   simulated?: boolean;
@@ -641,8 +646,10 @@ export const api = {
         }),
       },
     ),
-  devices: (c: AppConfig) =>
-    request<Device[]>(c, `/api/v1/households/${c.householdId}/devices`),
+  devices: (c: AppConfig, signal?: AbortSignal) =>
+    request<Device[]>(c, `/api/v1/households/${c.householdId}/devices`, { signal }),
+  demoSessions: (c: AppConfig, deviceId: string, afterId?: number, signal?: AbortSignal) =>
+    request<DemoSessionFeed>(c, `/api/v1/households/${encodeURIComponent(c.householdId)}/devices/${encodeURIComponent(deviceId)}/demo-sessions?limit=20${afterId === undefined ? "" : `&after_id=${afterId}`}`, { signal }),
   grants: (c: AppConfig, memberId: string) =>
     request<Grant[]>(
       c,

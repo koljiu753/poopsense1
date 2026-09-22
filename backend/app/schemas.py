@@ -191,6 +191,16 @@ class HouseholdSessionResult(DeviceSessionResult):
     simulated: bool = False
 
 
+class DemoFeedItem(HouseholdSessionResult):
+    cursor_id: int
+
+
+class DemoFeedResult(BaseModel):
+    items: list[DemoFeedItem]
+    next_after_id: int
+    has_more: bool
+
+
 class ClaimInput(BaseModel):
     member_id: str
     claim_method: Literal["user_claim", "admin_claim", "correction"] = "user_claim"

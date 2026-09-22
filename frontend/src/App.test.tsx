@@ -43,6 +43,7 @@ vi.mock("./api", async () => {
       confirmRobotHandover: vi.fn(),
       stopRobot: vi.fn(),
       devices: vi.fn(),
+      demoSessions: vi.fn(),
       grants: vi.fn(),
       createGrant: vi.fn(),
       revokeGrant: vi.fn(),
@@ -91,6 +92,7 @@ beforeEach(() => {
   sessionStorage.clear();
   window.history.replaceState(null, "", "/");
   mocked.simulationStatus.mockResolvedValue({ enabled: false });
+  mocked.demoSessions.mockResolvedValue({ items: [], next_after_id: 0, has_more: false });
   mocked.demoExplanation.mockImplementation(async (_config, sessionId) => ({
     session_id: sessionId, status: "not_generated", text: null, provider: null, model: null,
     input_version: "test-input", prompt_version: "test-prompt", attempt: 0,
@@ -497,6 +499,29 @@ describe("model routing provenance", () => {
 });
 
 describe("PoopSense core UI", () => {
+  it("opens the automatic device demo from home without assigning it to the selected member", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "打开硬件演示" }));
+    expect(await screen.findByText("设备就绪，等待这次测量。")).toBeVisible();
+    expect(window.location.hash).toBe("#/demo");
+    expect(document.title).toBe("硬件演示 · PoopSense");
+    expect(mocked.demoSessions).toHaveBeenCalledWith(expect.objectContaining({ householdId: "hh_001" }), "dev_001", undefined, expect.any(AbortSignal));
+    expect(mocked.generateDemoExplanation).not.toHaveBeenCalled();
+    expect(mocked.analyzeSession).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "按 ID 排查记录" }));
+    expect(await screen.findByRole("textbox", { name: "查找记录 ID" })).toBeVisible();
+  });
+
+  it("opens a direct demo URL independently of an unavailable member in the URL", async () => {
+    window.history.replaceState(null, "", "/#/demo?member=unavailable");
+    render(<App />);
+    expect(await screen.findByText("设备就绪，等待这次测量。")).toBeVisible();
+    expect(window.location.hash).toBe("#/demo");
+    expect(screen.queryByText("这个成员暂时无法查看")).not.toBeInTheDocument();
+    expect(mocked.generateDemoExplanation).not.toHaveBeenCalled();
+  });
+
   it("keeps a historical report inside previous conversation when opening direct chat", async () => {
     window.history.replaceState(null, "", "/#/chat?member=m_001");
     const prior = await mocked.analyzeSession.getMockImplementation()!(null as never, "m_001", "prior_record");

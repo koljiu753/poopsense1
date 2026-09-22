@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type AppConfig, type DemoExplanationResult } from "./api";
 import ChatMessageContent from "./ChatMessageContent";
 import "./demo-explanation.css";
@@ -8,6 +8,8 @@ type Scope = {
   mounted: boolean;
   revision: number;
   result: DemoExplanationResult | null;
+  autoAttempted?: boolean;
+  recoverRead?: boolean;
   request?: { kind: Operation; controller: AbortController; revision: number };
 };
 type ViewState = { scope: Scope; result: DemoExplanationResult | null; operation: Operation | null; error: string };
@@ -23,21 +25,33 @@ function requestError(error: unknown, kind: Operation) {
     : "暂时无法读取解读状态，请稍后重试。已有内容如仍显示，是上次读取的结果。";
 }
 
-export default function DemoExplanation({ config, sessionId, active = true }: {
-  config: AppConfig; sessionId: string; active?: boolean;
+export default function DemoExplanation({ config, sessionId, active = true, autoGenerate = false, onSettled, onPending, onUnavailable }: {
+  config: AppConfig; sessionId: string; active?: boolean; autoGenerate?: boolean;
+  onSettled?: (result: DemoExplanationResult) => void;
+  onPending?: (sessionId: string) => void;
+  onUnavailable?: (sessionId: string, status: number) => void;
 }) {
   const scope = useMemo<Scope>(() => ({ mounted: false, revision: 0, result: null }), [config, sessionId]);
   const [state, setState] = useState<ViewState>({ scope, result: null, operation: null, error: "" });
+  const settled = useRef(onSettled);
+  settled.current = onSettled;
+  const pending = useRef(onPending);
+  pending.current = onPending;
+  const autoMode = useRef(autoGenerate);
+  autoMode.current = autoGenerate;
+  const unavailable = useRef(onUnavailable);
+  unavailable.current = onUnavailable;
   const update = useCallback((patch: Partial<Omit<ViewState, "scope">>) => {
     if (!scope.mounted) return;
     setState(previous => ({ scope, result: null, operation: null, error: "", ...(previous.scope === scope ? previous : {}), ...patch }));
   }, [scope]);
   const run = useCallback(async (kind: Operation, retry = false) => {
     if (!scope.mounted || scope.request) return;
-    if (kind === "read" && (!active || document.hidden)) return;
+    if (!active || document.hidden) return;
     const revision = ++scope.revision;
     const controller = new AbortController();
     scope.request = { kind, revision, controller };
+    if (kind === "generate") { scope.autoAttempted = true; pending.current?.(sessionId); }
     update({ operation: kind, error: "" });
     try {
       const result = kind === "read"
@@ -47,13 +61,18 @@ export default function DemoExplanation({ config, sessionId, active = true }: {
       if (result.session_id !== sessionId || !["not_generated", "generating", "completed", "failed"].includes(result.status)
           || result.status === "completed" && (!result.text?.trim() || !result.provider?.trim() || !result.model?.trim())) throw new Error("Unexpected demo explanation");
       scope.result = result;
+      scope.recoverRead = false;
       update({ result, error: "" });
+      if (result.status === "completed" || result.status === "failed") settled.current?.(result);
+      if (result.status === "generating") pending.current?.(sessionId);
     } catch (error) {
       if (!scope.mounted || revision !== scope.revision || controller.signal.aborted) return;
       if (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)) {
         scope.result = null;
+        scope.recoverRead = false;
         update({ result: null });
-      }
+        unavailable.current?.(sessionId, error.status);
+      } else scope.recoverRead = true;
       update({ error: requestError(error, kind) });
     } finally {
       if (scope.request?.revision === revision) scope.request = undefined;
@@ -84,7 +103,7 @@ export default function DemoExplanation({ config, sessionId, active = true }: {
     };
     void run("read");
     const timer = window.setInterval(() => {
-      if (scope.result?.status === "generating") void run("read");
+      if (scope.result?.status === "generating" || autoMode.current && scope.recoverRead) void run("read");
     }, 2000);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -97,11 +116,17 @@ export default function DemoExplanation({ config, sessionId, active = true }: {
 
   const view = state.scope === scope ? state : { result: null, operation: null, error: "" };
   const { result, operation, error } = view;
+  useEffect(() => {
+    if (!autoGenerate || !active || document.hidden || operation || error || result?.status !== "not_generated" || scope.autoAttempted) return;
+    scope.autoAttempted = true;
+    void run("generate");
+  }, [active, autoGenerate, error, operation, result, run, scope]);
   const generating = result?.status === "generating";
   const canGenerate = result?.status === "not_generated" || result?.status === "failed" && result.retry_allowed;
   const status = operation === "generate" ? "生成请求已发送，正在等待结果。"
     : error ? "状态未能更新。"
     : !result ? operation === "read" ? "正在读取已保存状态…" : "尚未读取解读状态。"
+    : result.status === "not_generated" && autoGenerate && scope.autoAttempted ? "已确认尚未生成。可手动尝试，不会自动重复提交。"
     : { not_generated: "尚未生成演示解读。", generating: "演示解读生成中。", completed: "演示解读已完成。", failed: "本次演示解读生成失败。" }[result.status];
   return <section className="demo-explanation" aria-label="AI 演示解读">
     <header><span aria-hidden="true">✦</span><h3>AI 演示解读</h3></header>

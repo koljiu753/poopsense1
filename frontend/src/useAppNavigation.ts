@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-export type View = "home" | "result" | "doctor" | "health" | "social" | "settings";
+export type View = "home" | "result" | "doctor" | "health" | "social" | "settings" | "demo";
 export type HealthSection = "records" | "actions" | "trends";
 export type AppRoute = {
   view: View;
@@ -21,6 +21,7 @@ export function readRoute(hash = window.location.hash): AppRoute {
   const [path, search = ""] = hash.replace(/^#/, "").split("?");
   const query = new URLSearchParams(search);
   const route = { ...emptyRoute, memberId: query.get("member") ?? "" };
+  if (path === "/demo") return { ...emptyRoute, view: "demo" };
   if (path === "/chat") return { ...route, view: "doctor", chat: true };
   if (path === "/report") return { ...route, view: "doctor", sessionId: query.get("record") ?? "" };
   if (path === "/social" || path === "/settings" || path === "/home") return { ...route, view: path.slice(1) as View };
@@ -31,7 +32,7 @@ export function readRoute(hash = window.location.hash): AppRoute {
 
 export function routeHash(route: AppRoute) {
   const query = new URLSearchParams();
-  if (route.memberId) query.set("member", route.memberId);
+  if (route.memberId && route.view !== "demo") query.set("member", route.memberId);
   const path = route.view === "doctor" && route.chat ? "/chat" : route.view === "doctor" || route.view === "result" ? "/report" : route.view === "health" ? `/health/${route.section}` : `/${route.view}`;
   if ((route.view === "doctor" || route.view === "result") && route.sessionId) query.set("record", route.sessionId);
   if (route.view === "health" && route.section === "actions" && route.sourceId) query.set("source", route.sourceId);

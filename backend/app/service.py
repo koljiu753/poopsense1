@@ -52,15 +52,17 @@ def canonical_hash(payload: DeviceSessionInput) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def authenticate_device(db: Session, payload: DeviceSessionInput, api_key: str) -> DeviceBinding:
-    binding = authenticate_device_key(db, payload.device_id, api_key)
+def authenticate_device(db: Session, payload: DeviceSessionInput, api_key: str, *, lock: bool = False) -> DeviceBinding:
+    binding = authenticate_device_key(db, payload.device_id, api_key, lock=lock)
     if binding.household_id != payload.household_id:
         raise HTTPException(status_code=403, detail={"code": "DEVICE_HOUSEHOLD_MISMATCH"})
     return binding
 
 
-def authenticate_device_key(db: Session, device_id: str, api_key: str) -> DeviceBinding:
-    binding = db.get(DeviceBinding, device_id)
+def authenticate_device_key(db: Session, device_id: str, api_key: str, *, lock: bool = False) -> DeviceBinding:
+    binding = (db.scalar(select(DeviceBinding).where(DeviceBinding.device_id == device_id)
+                         .with_for_update().execution_options(populate_existing=True))
+               if lock else db.get(DeviceBinding, device_id))
     if not binding or not binding.active or not hmac.compare_digest(binding.api_key_hash, hash_secret(api_key)):
         raise HTTPException(status_code=401, detail={"code": "DEVICE_AUTH_FAILED"})
     return binding
@@ -279,7 +281,11 @@ def _duplicate_receipt(db: Session, existing: SessionRecord, digest: str):
 
 
 def ingest(db: Session, payload: DeviceSessionInput, api_key: str):
-    authenticate_device(db, payload, api_key)
+    # Serialize ID allocation and aggregate commit only for this device. Without
+    # this lock, a later ID could commit first and make an insertion-ID feed miss
+    # an earlier upload. PostgreSQL locks the binding row until commit/rollback;
+    # SQLite already serializes writes before allocating the inserted row ID.
+    authenticate_device(db, payload, api_key, lock=True)
     digest = canonical_hash(payload)
     existing = db.scalar(
         select(SessionRecord).where(
@@ -324,7 +330,7 @@ def ingest(db: Session, payload: DeviceSessionInput, api_key: str):
         # after our first read. Roll back the failed transaction before reading
         # its committed aggregate; subsequent fact/outbox failures are not hidden.
         db.rollback()
-        authenticate_device(db, payload, api_key)
+        authenticate_device(db, payload, api_key, lock=True)
         existing = db.scalar(select(SessionRecord).where(
             SessionRecord.device_id == payload.device_id,
             SessionRecord.external_session_id == payload.session_id,

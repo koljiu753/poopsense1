@@ -36,6 +36,67 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("manual sample AI demonstration", () => {
+  it("automatically recovers an initial read failure with GET before generating once", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(api.demoExplanation).mockRejectedValueOnce(new TypeError("offline")).mockResolvedValue(empty);
+    render(<DemoExplanation config={config} sessionId={sessionId} autoGenerate />);
+    await screen.findByRole("alert");
+    expect(api.generateDemoExplanation).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+    expect(await screen.findByText(completed.text!)).toBeVisible();
+    expect(api.demoExplanation).toHaveBeenCalledTimes(2);
+    expect(api.generateDemoExplanation).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(api.demoExplanation).toHaveBeenCalledTimes(2);
+  });
+
+  it("automatically checks an uncertain POST with GET but leaves a confirmed not-generated result for manual recovery", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(api.generateDemoExplanation).mockRejectedValue(new ApiError(408, "REQUEST_TIMEOUT"));
+    render(<DemoExplanation config={config} sessionId={sessionId} autoGenerate />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("结果暂未确认");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+    expect(screen.getByRole("status")).toHaveTextContent("可手动尝试");
+    expect(api.generateDemoExplanation).toHaveBeenCalledTimes(1);
+    expect(api.demoExplanation).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(api.generateDemoExplanation).toHaveBeenCalledTimes(1);
+    expect(api.demoExplanation).toHaveBeenCalledTimes(2);
+  });
+
+  it("automatically generates only after reading a not-generated state and does not retry a failure", async () => {
+    vi.mocked(api.generateDemoExplanation).mockResolvedValue(failed);
+    const onSettled = vi.fn();
+    render(<DemoExplanation config={config} sessionId={sessionId} autoGenerate onSettled={onSettled} />);
+    expect(await screen.findByRole("button", { name: "重试生成" })).toBeVisible();
+    expect(api.generateDemoExplanation).toHaveBeenCalledTimes(1);
+    expect(api.generateDemoExplanation).toHaveBeenCalledWith(config, sessionId, false, expect.any(AbortSignal));
+    expect(vi.mocked(api.demoExplanation).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.generateDemoExplanation).mock.invocationCallOrder[0]);
+    expect(onSettled).toHaveBeenCalledWith(failed);
+    await userEvent.setup().click(screen.getByRole("button", { name: "刷新解读状态" }));
+    expect(api.generateDemoExplanation).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([pending, completed, failed])("automatic mode only reads a persisted $status result", async saved => {
+    vi.mocked(api.demoExplanation).mockResolvedValue(saved);
+    render(<DemoExplanation config={config} sessionId={sessionId} autoGenerate />);
+    await waitFor(() => expect(api.demoExplanation).toHaveBeenCalledTimes(1));
+    expect(api.generateDemoExplanation).not.toHaveBeenCalled();
+  });
+
+  it("does not start automatic generation while hidden or after leaving before the initial read resolves", async () => {
+    const read = deferred<DemoExplanationResult>();
+    vi.mocked(api.demoExplanation).mockImplementationOnce(() => read.promise);
+    const { rerender } = render(<DemoExplanation config={config} sessionId={sessionId} autoGenerate />);
+    rerender(<DemoExplanation config={config} sessionId={sessionId} autoGenerate active={false} />);
+    await act(async () => read.resolve(empty));
+    expect(api.generateDemoExplanation).not.toHaveBeenCalled();
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    rerender(<DemoExplanation config={config} sessionId={sessionId} autoGenerate />);
+    expect(api.generateDemoExplanation).not.toHaveBeenCalled();
+    expect(api.demoExplanation).toHaveBeenCalledTimes(1);
+  });
+
   it("reads saved state without generation and keeps the material boundary visible", async () => {
     render(<DemoExplanation config={config} sessionId={sessionId} />);
     expect(await screen.findByRole("button", { name: "生成 AI 演示解读" })).toBeVisible();

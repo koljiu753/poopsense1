@@ -4,6 +4,17 @@ import { api } from "./api";
 const config = { apiBase: "http://test.invalid", householdId: "test", householdKey: "test-only" };
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+it("reads the latest demo once without a cursor and preserves an explicit zero cursor for new uploads", async () => {
+  const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [], next_after_id: 0, has_more: false }) });
+  vi.stubGlobal("fetch", fetcher);
+  await api.demoSessions(config, "device/one");
+  await api.demoSessions(config, "device/one", 0);
+  expect(fetcher.mock.calls[0][0]).toBe("http://test.invalid/api/v1/households/test/devices/device%2Fone/demo-sessions?limit=20");
+  expect(fetcher.mock.calls[1][0]).toContain("&after_id=0");
+  expect(new Headers(fetcher.mock.calls[0][1].headers).get("X-Household-Key")).toBe("test-only");
+  expect(fetcher.mock.calls[0][1].method ?? "GET").toBe("GET");
+});
+
 it("allows an obsolete inbox read to be cancelled without retrying", async () => {
   const fetcher = vi.fn((_url, init) => new Promise((_resolve, reject) => {
     init.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));

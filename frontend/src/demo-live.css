@@ -1,0 +1,32 @@
+.experience .demo-live-heading { padding: 20px; background: var(--yellow); border: 3px solid var(--ink); border-radius: 18px; box-shadow: 4px 4px 0 var(--ink); }
+.experience .demo-live-heading h1 { margin: 8px 0; font-size: clamp(25px, 4vw, 36px); }
+.experience .demo-live-heading small { font-weight: 900; }
+.experience .demo-device-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin: 20px 0 12px; }
+.experience .demo-device-controls label { display: grid; gap: 6px; flex: 1 1 240px; min-width: 0; font-weight: 800; }
+.experience .demo-device-controls select { width: 100%; min-width: 0; min-height: 44px; }
+.experience .demo-device-controls button, .experience .demo-live-history button { min-height: 44px; }
+.experience .demo-live-boundary { font-size: 14px; line-height: 1.7; }
+.experience .demo-live-record-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0 12px; font-size: 13px; }
+.experience .demo-live-record-id, .experience .demo-live-history button { overflow-wrap: anywhere; word-break: break-word; }
+.experience .demo-live-record-id { font-size: 13px; }
+.experience .demo-live-queue-status { padding: 10px; background: var(--yellow); border-radius: 10px; font-weight: 700; }
+.experience .result-arrival.demo-arrival { min-height: 0; padding: 22px; gap: 16px; grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+.experience .demo-arrival > :not(.result-burst) { position: relative; z-index: 2; }
+.experience .result-arrival.demo-arrival .result-arrival-copy { min-width: 0; padding: 16px; }
+.experience .result-arrival.demo-arrival h1 { margin: 8px 0; font-size: 23px; }
+.experience .result-arrival.demo-arrival .result-arrival-copy p { margin: 8px 0; font-size: 14px; line-height: 1.6; }
+.experience .result-arrival.demo-arrival .result-arrival-copy span { margin-top: 12px; padding: 8px 10px; font-size: 13px; line-height: 1.5; }
+.experience .demo-live-empty { border: 3px dashed var(--ink); border-radius: 20px; padding: 30px 20px; text-align: center; background: var(--cream); }
+.experience .demo-live-history { margin-top: 18px; }
+.experience .demo-live-history summary { min-height: 44px; cursor: pointer; font-weight: 800; }
+.experience .demo-live-history button { display: block; width: 100%; text-align: left; margin-top: 8px; }
+.experience .demo-entry { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px; margin: 0 0 20px; border: 2px solid var(--ink); border-radius: 12px; background: var(--yellow); }
+.experience .demo-entry p { flex: 1 1 200px; margin: 0; }
+.experience .demo-entry button { min-height: 44px; }
+@media (max-width: 650px) {
+  .experience .result-arrival.demo-arrival { grid-template-columns: minmax(0,1fr); padding: 22px 14px 16px; gap: 12px; }
+  .experience .result-arrival.demo-arrival img { height: 145px; }
+  .experience .result-arrival.demo-arrival h1 { font-size: 20px; }
+  .experience .result-arrival.demo-arrival .result-arrival-copy { padding: 12px; }
+  .experience .result-arrival.demo-arrival .result-arrival-copy small { display: none; }
+}

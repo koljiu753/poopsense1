@@ -1,5 +1,11 @@
 # PoopSense Backend
 
+## 自动设备演示记录发现（2026-09-22）
+
+新增家庭鉴权只读 `GET /api/v1/households/{household_id}/devices/{device_id}/demo-sessions`，通过 `after_id/next_after_id/has_more` 分页发现指定设备的手动演示记录，首次仅最新一条。每条仍检查成员授权，未认领仅 owner/caregiver 可看。Reader `/#/demo` 复用既有解读服务自动生成；不新增后台 worker，也不修改健康门控。
+
+上传内部按设备绑定行锁串行提交，防止同设备较小 ID 晚提交导致游标遗漏，其他设备可以并发。原上传接口、JSON、设备客户端和凭据不变，无新增迁移。PostgreSQL 验证脚本新增实际延迟提交与跨设备并发检查；具体发布状态见[自动流程验收](../docs/releases/2026-09-22-reader-auto-demo.md)。
+
 ## 手动采样 AI 演示解读（2026-09-22）
 
 新增家庭鉴权的 `GET/POST /api/v1/households/{household_id}/sessions/{session_id}/demo-explanation`。读取无副作用；显式生成通过已配置的 DeepSeek 返回受约束的演示文字，失败显式重试，不以规则正文冒充模型成功。独立表 `demo_explanations` 保存输入哈希、输入/提示版本、实际模型及状态；当前迁移为 `d3e42c180a77`，只新增表，不覆盖原始观测或健康状态。

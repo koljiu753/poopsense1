@@ -7,7 +7,7 @@ import threading
 import uuid
 import os
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -45,6 +45,7 @@ from .schemas import (
     RobotPoseCaptureInput, RobotTaskResult,
     NotificationResult, RevokeResult, SessionReceipt,
     DemoExplanationInput, DemoExplanationResult,
+    DemoFeedResult,
 )
 from .service import (
     authorize_household, authorize_member_view, claim_session, create_assessment_version,
@@ -69,7 +70,7 @@ from .connections import create_request as create_agent_match, list_connections 
 from .weekly_reports import generate as generate_weekly_report, list_reports as list_weekly_reports
 from .raw_data import complete_deletion as complete_raw_deletion, create_authorization as create_raw_authorization, list_authorizations as list_raw_authorizations, register_upload as register_raw_upload, revoke as revoke_raw_authorization
 from .longitudinal import list_followups, update_followup
-from . import demo_explanations
+from . import demo_explanations, demo_feed
 
 
 vbot_navigator = (
@@ -593,6 +594,15 @@ def household_session_detail(household_id: str, session_id: str,
 def get_demo_explanation(household_id: str, session_id: str,
                          x_household_key: str = Header(...), db: Session = Depends(get_db)):
     return demo_explanations.read(db, household_id, session_id, x_household_key)
+
+
+@app.get("/api/v1/households/{household_id}/devices/{device_id}/demo-sessions", response_model=DemoFeedResult)
+def get_demo_sessions(household_id: str, device_id: str,
+                      after_id: int | None = Query(default=None, ge=0, le=2**63 - 1),
+                      limit: int = Query(default=20, ge=1, le=100),
+                      x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    """Latest sample or ID page; ingest serializes commits within each device."""
+    return demo_feed.read(db, household_id, device_id, x_household_key, after_id=after_id, limit=limit)
 
 
 @app.post("/api/v1/households/{household_id}/sessions/{session_id}/demo-explanation", response_model=DemoExplanationResult)

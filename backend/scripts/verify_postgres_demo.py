@@ -14,7 +14,8 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
-from threading import Barrier
+from threading import Barrier, Event
+import time
 import uuid
 
 from sqlalchemy import create_engine, event, func, select, text
@@ -177,6 +178,76 @@ def verify_demo_explanation_concurrency(session_factory):
         demo.model_for_task = prior_resolver
 
 
+def verify_demo_feed_commit_order(session_factory, manual, private_workspace, private_key):
+    """A delayed upload cannot be overtaken on its device; other devices proceed."""
+    from app import demo_feed
+    from app.schemas import DeviceSessionInput
+    from app.service import ingest
+    first_inserted, release_first, second_lock_requested = Event(), Event(), Event()
+    pids = {}
+    with session_factory() as db:
+        cursor = demo_feed.read(db, 'hh_001', 'dev_001', 'household-secret')['next_after_id']
+
+    def before_commit(db):
+        if db.info.get('feed_order_label') == 'first':
+            first_inserted.set()
+            assert release_first.wait(timeout=20), 'Timed out releasing first upload'
+
+    def before_execute(state):
+        if (state.session.info.get('feed_order_label') == 'second'
+                and getattr(state.statement, '_for_update_arg', None) is not None):
+            second_lock_requested.set()
+
+    def upload(label, private=False):
+        item = deepcopy(manual)
+        item.update(session_id='ci_feed_' + label, correlation_id='cor_feed_' + label)
+        key = 'dev-secret'
+        if private:
+            item.update(device_id=private_workspace.device_id, household_id=private_workspace.household_id)
+            key = private_key
+        with session_factory() as db:
+            pids[label] = db.scalar(text('SELECT pg_backend_pid()'))
+            db.info['feed_order_label'] = label
+            return ingest(db, DeviceSessionInput.model_validate(item), key)[0].id
+
+    event.listen(Session, 'before_commit', before_commit)
+    event.listen(Session, 'do_orm_execute', before_execute)
+    try:
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            first = executor.submit(upload, 'first')
+            try:
+                assert first_inserted.wait(timeout=10)
+                second = executor.submit(upload, 'second')
+                assert second_lock_requested.wait(timeout=10)
+                blocked = False
+                for _ in range(100):
+                    with session_factory() as db:
+                        blocked = pids['first'] in db.scalar(text('SELECT pg_blocking_pids(:pid)'), {'pid': pids['second']})
+                    if blocked:
+                        break
+                    time.sleep(.02)
+                assert blocked and not second.done(), 'Second upload did not wait for its device lock'
+                with session_factory() as db:
+                    waiting = demo_feed.read(db, 'hh_001', 'dev_001', 'household-secret', after_id=cursor)
+                    assert waiting['items'] == [] and waiting['next_after_id'] == cursor
+                # This completes while the first device still holds its lock.
+                assert executor.submit(upload, 'other_device', True).result(timeout=10) > 0
+            finally:
+                release_first.set()
+            first_id, second_id = first.result(timeout=10), second.result(timeout=10)
+            assert first_id < second_id
+    finally:
+        release_first.set()
+        event.remove(Session, 'before_commit', before_commit)
+        event.remove(Session, 'do_orm_execute', before_execute)
+    with session_factory() as db:
+        page = demo_feed.read(db, 'hh_001', 'dev_001', 'household-secret', after_id=cursor, limit=1)
+        assert [item['session_id'] for item in page['items']] == ['ci_feed_first'] and page['has_more']
+        page = demo_feed.read(db, 'hh_001', 'dev_001', 'household-secret', after_id=page['next_after_id'], limit=1)
+        assert [item['session_id'] for item in page['items']] == ['ci_feed_second'] and not page['has_more']
+    return {'status': 'passed', 'same_device_commit_order': 'serialized', 'other_device_upload': 'not_blocked'}
+
+
 def main():
     if sys.argv[1:] == ['--child-read']:
         child_read()
@@ -296,15 +367,12 @@ def main():
         application.settings = replace(application.settings, bootstrap_demo_device=False)
         chat_fk = verify_chat_foreign_keys(SessionLocal)
         demo_explanation = verify_demo_explanation_concurrency(SessionLocal)
+        demo_feed_order = verify_demo_feed_commit_order(SessionLocal, manual, workspace, private_device_key)
         engine.dispose()
         subprocess.run([sys.executable, str(Path(__file__).resolve()), '--child-read'], check=True, timeout=60)
 
         def race(identifier, differing):
             rendezvous = Barrier(2)
-
-            def before_flush(session, flush_context, instances):
-                if any(isinstance(row, SessionRecord) and row.external_session_id == identifier for row in session.new):
-                    rendezvous.wait(timeout=20)
 
             def upload(index):
                 item = deepcopy(payload)
@@ -313,17 +381,16 @@ def main():
                     item['data_kind'] = 'simulated'
                 with SessionLocal() as db:
                     try:
+                        # Both requests start together; the device-row lock is
+                        # deliberately acquired before any SessionRecord flush.
+                        rendezvous.wait(timeout=20)
                         result = ingest(db, DeviceSessionInput.model_validate(item), 'dev-secret')
                         return {'code': 202, 'duplicate': result[3]}
                     except HTTPException as error:
                         return {'code': error.status_code}
 
-            event.listen(Session, 'before_flush', before_flush)
-            try:
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    results = list(executor.map(upload, (0, 1)))
-            finally:
-                event.remove(Session, 'before_flush', before_flush)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(upload, (0, 1)))
             if differing:
                 assert sorted(row['code'] for row in results) == [202, 409], results
             else:
@@ -344,6 +411,7 @@ def main():
         print(json.dumps({'postgres_migrations': 'passed', 'upload_claim_fresh_process': 'passed',
                           'chat_fk': chat_fk,
                           'demo_explanation_concurrency': demo_explanation,
+                          'demo_feed_commit_order': demo_feed_order,
                           'same_payload_race': same, 'different_payload_race': different,
                           'backup_restore': backup}), flush=True)
     finally:
