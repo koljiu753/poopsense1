@@ -22,6 +22,8 @@ vi.mock("./api", async () => {
       createMember: vi.fn(),
       inbox: vi.fn(),
       sessionById: vi.fn(),
+      demoExplanation: vi.fn(),
+      generateDemoExplanation: vi.fn(),
       trend: vi.fn(),
       actionFollowups: vi.fn(),
       updateActionFollowup: vi.fn(),
@@ -89,6 +91,11 @@ beforeEach(() => {
   sessionStorage.clear();
   window.history.replaceState(null, "", "/");
   mocked.simulationStatus.mockResolvedValue({ enabled: false });
+  mocked.demoExplanation.mockImplementation(async (_config, sessionId) => ({
+    session_id: sessionId, status: "not_generated", text: null, provider: null, model: null,
+    input_version: "test-input", prompt_version: "test-prompt", attempt: 0,
+    started_at: null, completed_at: null, lease_expires_at: null, error_code: null, error_message: null, retry_allowed: false,
+  }));
   mocked.members.mockResolvedValue([
     { member_id: "m_001", display_name: "小风", linked_to_current_user: true },
     { member_id: "m_002", display_name: "家人", linked_to_current_user: false },

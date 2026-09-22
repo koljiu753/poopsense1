@@ -8,7 +8,7 @@ import RecordObservations from "./RecordObservations";
 
 vi.mock("./api", async importOriginal => {
   const actual = await importOriginal<typeof import("./api")>();
-  return { ...actual, api: { members: vi.fn(), sessionById: vi.fn() } };
+  return { ...actual, api: { members: vi.fn(), sessionById: vi.fn(), demoExplanation: vi.fn(), generateDemoExplanation: vi.fn() } };
 });
 const config = { apiBase: "", householdId: "test-family", householdKey: "test-only-family-key" };
 const members = [{ member_id: "test_member", display_name: "测试成员", linked_to_current_user: true }];
@@ -23,7 +23,16 @@ const sample: HouseholdSession = {
   sampling: { session_kind: "manual_sampling", duration_semantics: "manual_sampling_seconds", duration_s: 12, started_at: "2026-09-21T16:00:00+08:00", ended_at: "2026-09-21T16:00:12+08:00", presence_state: "unknown", collection_state: "partial", temperature_c: null, humidity_pct: null },
   processing: { analysis_complete: true, analysis_source: "rules", assessment_status: "unable_to_determine", reliable: false, risk_level: "not_evaluated", message: "本次无法可靠判断", reasons: ["collection_not_completed"], llm_status: "not_applicable" },
 };
-beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.members).mockResolvedValue(members); vi.mocked(api.sessionById).mockResolvedValue(sample); });
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(api.members).mockResolvedValue(members);
+  vi.mocked(api.sessionById).mockResolvedValue(sample);
+  vi.mocked(api.demoExplanation).mockImplementation(async (_config, sessionId) => ({
+    session_id: sessionId, status: "not_generated", text: null, provider: null, model: null,
+    input_version: "test-input", prompt_version: "test-prompt", attempt: 0,
+    started_at: null, completed_at: null, lease_expires_at: null, error_code: null, error_message: null, retry_allowed: false,
+  }));
+});
 afterEach(cleanup);
 
 function deferred<T>() {
@@ -79,6 +88,9 @@ describe("authorized record lookup", () => {
     expect(await screen.findByRole("article", { name: "记录查找结果" })).toHaveTextContent("红色（red）");
     expect(api.sessionById).toHaveBeenCalledWith(config, sample.session_id, expect.any(AbortSignal));
     expect(screen.getByText("硬件上传 · 测试记录")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "生成 AI 演示解读" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "记录处理状态" })).toHaveTextContent("本次手动采样不适用大模型健康报告");
+    expect(api.generateDemoExplanation).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "刷新待认领箱" }));
     expect(refresh).toHaveBeenCalledTimes(1);
     vi.mocked(api.sessionById).mockResolvedValue({ ...sample, assignment_status: "confirmed", member_id: "test_member" });
@@ -129,7 +141,7 @@ describe("authorized record lookup", () => {
     const refresh = screen.getByRole("button", { name: "刷新这条记录" });
     await user.click(refresh);
     expect(screen.getByRole("article", { name: "记录查找结果" })).toBe(card);
-    expect(screen.getByRole("status")).toHaveTextContent("正在更新，显示上次读取内容");
+    expect(screen.getByRole("status", { name: "记录读取状态" })).toHaveTextContent("正在更新，显示上次读取内容");
     expect(refresh).toHaveFocus();
     expect(refresh).toHaveAttribute("aria-disabled", "true");
     await user.keyboard("{Enter}");
@@ -137,7 +149,7 @@ describe("authorized record lookup", () => {
     await act(async () => { waiting.reject(new ApiError(503, "private upstream detail")); });
     expect(screen.getByRole("article", { name: "记录查找结果" })).toBe(card);
     expect(screen.getByRole("alert")).toHaveTextContent("更新未完成，以下仍是上次读取的内容");
-    expect(screen.getByRole("status")).not.toHaveTextContent("已完成");
+    expect(screen.getByRole("status", { name: "记录读取状态" })).not.toHaveTextContent("已完成");
     expect(card).toHaveTextContent("待认领");
     expect(screen.queryByText(/private upstream detail/)).not.toBeInTheDocument();
     vi.mocked(api.sessionById).mockResolvedValueOnce({ ...sample, assignment_status: "confirmed", member_id: "test_member" });
@@ -199,7 +211,7 @@ describe("authorized record lookup", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("上次读取的内容");
     expect(screen.getByRole("article", { name: "记录查找结果" })).toBe(card);
     expect(screen.queryByText("已归属：测试成员")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).not.toHaveTextContent("已完成");
+    expect(screen.getByRole("status", { name: "记录读取状态" })).not.toHaveTextContent("已完成");
   });
 
   it("lets a new search supersede a claim refresh and ignores further updates for the old ID", async () => {

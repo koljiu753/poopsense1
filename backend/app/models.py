@@ -537,3 +537,27 @@ class RawDataUpload(Base):
     status: Mapped[str] = mapped_column(String(30), index=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DemoExplanation(Base):
+    __tablename__ = "demo_explanations"
+    __table_args__ = (UniqueConstraint("session_id", "input_hash", "prompt_version", name="uq_demo_explanation_input"),)
+
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), index=True)
+    input_hash: Mapped[str] = mapped_column(String(64))
+    input_version: Mapped[str] = mapped_column(String(50))
+    prompt_version: Mapped[str] = mapped_column(String(50))
+    input_facts: Mapped[dict[str, Any]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(30))
+    attempt: Mapped[int] = mapped_column(Integer)
+    lease_token: Mapped[str] = mapped_column(String(100))
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    requested_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt_history: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)

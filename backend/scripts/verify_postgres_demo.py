@@ -57,6 +57,9 @@ def configure(url):
         raise RuntimeError('Provider HTTP is disabled in PostgreSQL verification')
 
     httpx.HTTPTransport.handle_request = deny_external_http
+    async def deny_external_async_http(*args, **kwargs):
+        raise RuntimeError('Provider HTTP is disabled in PostgreSQL verification')
+    httpx.AsyncHTTPTransport.handle_async_request = deny_external_async_http
 
 
 def child_read():
@@ -101,6 +104,77 @@ def verify_chat_foreign_keys(session_factory):
         assert len(db.scalars(select(AgentStep).where(AgentStep.run_id == run_id)).all()) == 2
         assert len(db.scalars(select(AgentHandoff).where(AgentHandoff.run_id == run_id)).all()) == 1
     return 'passed'
+
+
+def verify_demo_explanation_concurrency(session_factory):
+    """Actual PG unique-key/CAS arbitration; only external model output is stubbed."""
+    from app import demo_explanations as demo
+    from app.agent import ModelReply
+    from app.model_routing import ModelSpec
+    from app.models import DemoExplanation
+    from sqlalchemy.sql.dml import Update
+    spec = ModelSpec('ci', 'deepseek', 'deepseek-ci-stub', 'https://api.deepseek.com', 'ci-only', 10, 1000, 'deepseek')
+    prior_resolver = demo.model_for_task
+    calls = []
+
+    def caller(messages, _):
+        facts = json.loads(messages[-1]['content'])
+        calls.append(True)
+        explanation = (f"记录的颜色标签为{demo.COLOR_LABELS[facts['color']]}。"
+                       f"记录的形状标签为{demo.SHAPE_LABELS[facts['shape']]}。"
+                       f"本次手动采样时长为{facts['sampling_seconds']}秒。")
+        return ModelReply(json.dumps({'facts_echo': facts, 'explanation': explanation}, ensure_ascii=False),
+                          {'source': 'model', 'provider': 'deepseek', 'model': 'deepseek-ci-stub'})
+
+    def invoke(retry=False):
+        with session_factory() as db:
+            assert db.bind.dialect.name == 'postgresql'
+            return demo.generate(db, 'hh_001', 'ci_manual', 'household-secret', retry=retry, model_caller=caller)
+
+    demo.model_for_task = lambda _: spec
+    try:
+        rendezvous = Barrier(2)
+        def before_flush(db, *_):
+            if any(isinstance(row, DemoExplanation) for row in db.new):
+                rendezvous.wait(timeout=15)
+        event.listen(Session, 'before_flush', before_flush)
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(lambda _: invoke(), (0, 1)))
+        finally:
+            event.remove(Session, 'before_flush', before_flush)
+        assert len(calls) == 1
+        assert all(result['status'] in ('generating', 'completed') for result in results)
+        with session_factory() as db:
+            assert db.scalar(select(func.count()).select_from(DemoExplanation)) == 1
+            row = db.scalar(select(DemoExplanation))
+            row.status, row.text, row.error_code = 'failed', None, 'MODEL_PROVIDER_FAILED'
+            db.commit()
+        assert invoke()['status'] == 'failed' and len(calls) == 1
+
+        # Force both transactions to see the same failed attempt before CAS.
+        rendezvous = Barrier(2)
+        def before_execute(state):
+            statement = state.statement
+            if (isinstance(statement, Update) and statement.table.name == 'demo_explanations'
+                    and 'attempt=' in str(statement)):
+                rendezvous.wait(timeout=15)
+        event.listen(Session, 'do_orm_execute', before_execute)
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(lambda _: invoke(True), (0, 1)))
+        finally:
+            event.remove(Session, 'do_orm_execute', before_execute)
+        assert len(calls) == 2
+        with session_factory() as db:
+            row = db.scalar(select(DemoExplanation))
+            assert row.status == 'completed' and row.attempt == 2
+            assert len(row.attempt_history) == 1
+            assert demo.read(db, 'hh_001', 'ci_manual', 'household-secret')['status'] == 'completed'
+        assert len(calls) == 2
+        return {'status': 'passed', 'same_input_model_calls': 1, 'concurrent_retry_model_calls': 1}
+    finally:
+        demo.model_for_task = prior_resolver
 
 
 def main():
@@ -221,6 +295,7 @@ def main():
             assert visible.status_code == 200 and len(visible.json()) == 1
         application.settings = replace(application.settings, bootstrap_demo_device=False)
         chat_fk = verify_chat_foreign_keys(SessionLocal)
+        demo_explanation = verify_demo_explanation_concurrency(SessionLocal)
         engine.dispose()
         subprocess.run([sys.executable, str(Path(__file__).resolve()), '--child-read'], check=True, timeout=60)
 
@@ -268,6 +343,7 @@ def main():
         backup = verify_backup_restore(admin, engine, schema, container) if container else {'status': 'not_run'}
         print(json.dumps({'postgres_migrations': 'passed', 'upload_claim_fresh_process': 'passed',
                           'chat_fk': chat_fk,
+                          'demo_explanation_concurrency': demo_explanation,
                           'same_payload_race': same, 'different_payload_race': different,
                           'backup_restore': backup}), flush=True)
     finally:

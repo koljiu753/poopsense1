@@ -1453,7 +1453,7 @@ function Health({
         busy={busy}
         onAssign={onAssign}
       />}
-      <RecordLookup config={config} members={members} onRefreshInbox={onRetryInbox} updatedRecord={recordLookupUpdate} />
+      <RecordLookup config={config} members={members} onRefreshInbox={onRetryInbox} updatedRecord={recordLookupUpdate} active={active && section === "records"} />
       <section className="progressive-panel record-details" aria-label="最近记录">
         <header className="records-title"><b>最近记录</b><span>{recordsLoading ? "正在读取…" : recordsError && !sessions.length ? "暂未读到" : `${sessions.length} 次已归属记录`}</span></header>
         <article className="history">

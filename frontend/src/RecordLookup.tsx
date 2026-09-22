@@ -2,11 +2,12 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, type AppConfig, type HouseholdSession, type Member } from "./api";
 import RecordObservations from "./RecordObservations";
 import RecordSource from "./RecordSource";
+import DemoExplanation from "./DemoExplanation";
 
 export type RecordLookupUpdate = { config: AppConfig; sessionId: string };
 
-export default function RecordLookup({ config, members, onRefreshInbox, updatedRecord }: {
-  config: AppConfig; members: Member[]; onRefreshInbox: () => void; updatedRecord?: RecordLookupUpdate | null;
+export default function RecordLookup({ config, members, onRefreshInbox, updatedRecord, active = true }: {
+  config: AppConfig; members: Member[]; onRefreshInbox: () => void; updatedRecord?: RecordLookupUpdate | null; active?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<HouseholdSession | null>(null);
@@ -62,7 +63,7 @@ export default function RecordLookup({ config, members, onRefreshInbox, updatedR
       <button type="submit" disabled={loadingId === query.trim() || !query.trim()}>{loadingId && loadingId === query.trim() ? "正在查找…" : "查找"}</button>
     </form>
     <p>查询当前家庭有权查看的记录，包含更早的记录。请使用电脑采集程序回执中的同一个 ID。</p>
-    <p className="record-lookup-status" role="status">{loadingId
+    <p className="record-lookup-status" role="status" aria-label="记录读取状态">{loadingId
       ? result ? "正在更新，显示上次读取内容。" : "正在查找这条记录…"
       : result ? error ? "显示上次读取的内容。" : "本次读取已完成。" : ""}</p>
     {error && <p role="alert">{result && "更新未完成，以下仍是上次读取的内容。"}{error}</p>}
@@ -73,6 +74,7 @@ export default function RecordLookup({ config, members, onRefreshInbox, updatedR
       {result.assignment_status === "pending_claim" && <button type="button" onClick={onRefreshInbox}>刷新待认领箱</button>}
       <button type="button" aria-disabled={!!loadingId} onClick={() => { if (!loadingId) void findRecord(result.session_id); }}>刷新这条记录</button>
       <RecordObservations record={result} expanded />
+      {result.sampling?.session_kind === "manual_sampling" && <DemoExplanation config={config} sessionId={result.session_id} active={active} />}
     </article>}
   </section>;
 }

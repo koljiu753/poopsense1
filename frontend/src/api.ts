@@ -56,6 +56,22 @@ export type HouseholdSession = RecordObservationDetails & {
   assignment_version: number;
   member_id: string | null;
 };
+export type DemoExplanationResult = {
+  session_id: string;
+  status: "not_generated" | "generating" | "completed" | "failed";
+  text: string | null;
+  provider: string | null;
+  model: string | null;
+  input_version: string;
+  prompt_version: string;
+  attempt: number;
+  started_at: string | null;
+  completed_at: string | null;
+  lease_expires_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  retry_allowed: boolean;
+};
 export type InboxItem = RecordObservationDetails & {
   data_kind?: DataKind;
   simulated?: boolean;
@@ -549,6 +565,12 @@ export const api = {
     request<InboxItem[]>(c, `/api/v1/households/${c.householdId}/claim-inbox`, { signal }),
   sessionById: (c: AppConfig, sessionId: string, signal?: AbortSignal) =>
     request<HouseholdSession>(c, `/api/v1/households/${encodeURIComponent(c.householdId)}/sessions/${encodeURIComponent(sessionId)}`, { signal }),
+  demoExplanation: (c: AppConfig, sessionId: string, signal?: AbortSignal) =>
+    request<DemoExplanationResult>(c, `/api/v1/households/${encodeURIComponent(c.householdId)}/sessions/${encodeURIComponent(sessionId)}/demo-explanation`, { signal }),
+  generateDemoExplanation: (c: AppConfig, sessionId: string, retry: boolean, signal?: AbortSignal) =>
+    request<DemoExplanationResult>(c, `/api/v1/households/${encodeURIComponent(c.householdId)}/sessions/${encodeURIComponent(sessionId)}/demo-explanation`, {
+      method: "POST", body: JSON.stringify({ retry }), signal,
+    }),
   simulationStatus: (c: AppConfig) => request<{ enabled: boolean; reason?: string | null }>(c, `/api/v1/households/${c.householdId}/sensor-simulation`),
   simulateSensor: (c: AppConfig, payload: { request_id: string; timestamp: string; scenario: string; member_id: string | null }) =>
     request<{ session_id: string; duplicate: boolean; assignment_status: string }>(c,

@@ -776,3 +776,25 @@ class MemberSessionResult(SessionEvidenceResult):
     risk_level: str
     message: str
     visual_profile: PoopVisualProfile
+
+
+class DemoExplanationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    retry: bool = Field(default=False, strict=True)
+
+
+class DemoExplanationResult(BaseModel):
+    session_id: str
+    status: Literal["not_generated", "generating", "completed", "failed"]
+    text: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    input_version: str
+    prompt_version: str
+    attempt: int = 0
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    retry_allowed: bool = False

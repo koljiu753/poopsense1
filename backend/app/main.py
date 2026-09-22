@@ -7,7 +7,7 @@ import threading
 import uuid
 import os
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -44,6 +44,7 @@ from .schemas import (
     RobotDeliveryInput, RobotHandoverConfirmationInput, RobotPlanResult,
     RobotPoseCaptureInput, RobotTaskResult,
     NotificationResult, RevokeResult, SessionReceipt,
+    DemoExplanationInput, DemoExplanationResult,
 )
 from .service import (
     authorize_household, authorize_member_view, claim_session, create_assessment_version,
@@ -68,6 +69,7 @@ from .connections import create_request as create_agent_match, list_connections 
 from .weekly_reports import generate as generate_weekly_report, list_reports as list_weekly_reports
 from .raw_data import complete_deletion as complete_raw_deletion, create_authorization as create_raw_authorization, list_authorizations as list_raw_authorizations, register_upload as register_raw_upload, revoke as revoke_raw_authorization
 from .longitudinal import list_followups, update_followup
+from . import demo_explanations
 
 
 vbot_navigator = (
@@ -585,6 +587,21 @@ def household_session_detail(household_id: str, session_id: str,
         member_id=assignment.member_id, simulated=is_simulated_record(record),
         **session_evidence_map(db, [record])[record.id],
     )
+
+
+@app.get("/api/v1/households/{household_id}/sessions/{session_id}/demo-explanation", response_model=DemoExplanationResult)
+def get_demo_explanation(household_id: str, session_id: str,
+                         x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    return demo_explanations.read(db, household_id, session_id, x_household_key)
+
+
+@app.post("/api/v1/households/{household_id}/sessions/{session_id}/demo-explanation", response_model=DemoExplanationResult)
+def generate_demo_explanation(household_id: str, session_id: str, payload: DemoExplanationInput,
+                              response: Response, x_household_key: str = Header(...), db: Session = Depends(get_db)):
+    result = demo_explanations.generate(db, household_id, session_id, x_household_key, retry=payload.retry)
+    if result["status"] == "generating":
+        response.status_code = 202
+    return result
 
 
 class SensorSimulationInput(BaseModel):
