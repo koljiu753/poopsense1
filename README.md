@@ -12,6 +12,8 @@ PoopSense 是面向家庭一般成员的马桶侧传感设备与 AI 助手项目
 
 [打开PoopSense](https://poopsense.org/) · [原Reader入口](https://poopsense-reader-0912.vercel.app/) · [多模型接入与路由](docs/model-routing.md)
 
+2026-09-22新增手动采样“AI 演示解读”：健康→记录→按上传回执 ID 查找，点击生成后由 DeepSeek 解释颜色/形状等演示事实并独立持久保存。卡纸、橡皮泥不生成健康报告，原健康分析“不适用”保持不变。已通过真实网页首次生成、刷新保存、跨入口读取和数据库独立核对；后端627项、前端197项及CI通过。详见[操作步骤、真实样例与验收](docs/releases/2026-09-22-reader-ai-demo.md)。硬件原接口、地址、密钥和联调包保留。
+
 2026-09-22自有域名已绑定Reader项目，页面与原入口连接同一持久化测试库。记录查询在认领成功后定向更新；同ID刷新保留已有观测，网络失败显示上次内容并可重试，授权失效时清除。详见[域名与记录查询迭代](docs/releases/2026-09-22-reader-domain.md)。
 
 2026-09-21 Reader公网硬件测试链路已上线：独立Neon PostgreSQL持久化、设备凭据、手动采样原始观测、待认领与精确ID查询。合成数据实际完成上传→页面认领→重新部署后读取，并通过32表云数据库备份恢复。后端588项、前端173项及真实PostgreSQL持续集成通过。详见[实际验收与边界](docs/releases/2026-09-21-reader-hardware.md)和[硬件队友上传步骤](backend/scripts/README-reader-device.md)。真实硬件文件与USB链路尚待验收，Exhibition本地包保留备用。
